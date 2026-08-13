@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block subtitle %}<span id="subtitle">加载中…</span>{% endblock %}
+
+{% block actions %}
+{% for h, label in ranges %}
+<button class="btn sm {% if h == hours %}primary{% endif %}" data-hours="{{ h }}">{{ label }}</button>
+{% endfor %}
+<button class="btn" id="btn-export">导出 CSV</button>
+{% endblock %}
+
+{% block content %}
+<div class="hero" id="hero"></div>
+<div class="strip" id="strip"></div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>请求趋势</h2><span class="spacer"></span>
+    <div class="legend">
+      <span><i style="background:var(--accent)"></i>请求数</span>
+      <span><i style="background:var(--bad)"></i>失败</span>
+      <span id="chart-note"></span>
+    </div>
+  </div>
+  <div class="chart-box" id="chart"></div>
+</section>
+
+<div class="cols cols-2">
+  <section class="card">
+    <div class="card-head"><h2>延迟分布</h2><span class="spacer"></span>
+      <span class="muted">仅统计成功请求</span></div>
+    <div class="card-body">
+      <div class="muted" style="margin-bottom:8px">端到端耗时</div>
+      <div class="stat-row" id="pct-duration"></div>
+      <div class="muted" style="margin:16px 0 8px">流式首字节 TTFT</div>
+      <div class="stat-row" id="pct-ttft"></div>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>状态码与端点</h2></div>
+    <div class="card-body" id="dist"></div>
+  </section>
+</div>
+
+<div class="cols cols-2">
+  <section class="card">
+    <div class="card-head"><h2>模型用量</h2><span class="spacer"></span>
+      <span class="muted">按客户端请求的模型名聚合</span></div>
+    <div class="card-body flush"><div id="models"></div></div>
+  </section>
+  <section class="card">
+    <div class="card-head"><h2>令牌用量</h2><span class="spacer"></span>
+      <a class="muted" href="/tokens">管理令牌 →</a></div>
+    <div class="card-body flush"><div id="clients"></div></div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>最近调用</h2><span class="spacer"></span>
+    <a class="muted" href="/logs">查看全部日志 →</a></div>
+  <div class="card-body flush"><div id="recent"></div></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/charts.js"></script>
+<script src="/static/dashboard.js"></script>
+{% endblock %}

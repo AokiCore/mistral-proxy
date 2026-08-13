@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}用量统计{% endblock %}
+{% block bodyattrs %}data-hours="{{ hours }}"{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>用量统计</h1>
+    <p class="sub">网关吞吐、延迟分布与账号池状态 · <span id="ts">—</span></p>
+  </div>
+  <div class="toolbar">
+    <div class="seg">
+      {% for h, label in ranges %}
+      <button class="seg-item {% if h == hours %}on{% endif %}" data-hours="{{ h }}">{{ label }}</button>
+      {% endfor %}
+    </div>
+    <button class="btn ghost" id="exp-all">导出 CSV</button>
+  </div>
+</div>
+
+<div class="banner" id="masked-banner" style="display:none">
+  <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+  <span>当前是匿名视图，账号邮箱已打码、客户端维度已隐藏。用 <span class="mono">?token=你的AdminToken</span> 打开本页可看完整数据。</span>
+</div>
+
+<div class="stat-grid" id="cards"></div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>请求趋势</h2>
+    <div class="legend">
+      <span><i style="background:var(--acc)"></i>请求数</span>
+      <span><i style="background:var(--bad)"></i>失败</span>
+      <span id="chart-hint" class="hint"></span>
+    </div>
+  </div>
+  <div id="chart"></div>
+</div>
+
+<div class="grid2">
+  <section class="panel">
+    <div class="panel-head"><h2>延迟分布</h2><span class="hint">仅统计成功请求</span></div>
+    <div class="lbl" style="margin-bottom:8px">端到端耗时 (ms)</div>
+    <div class="pct-grid" id="pct-duration"></div>
+    <div class="lbl" style="margin:16px 0 8px">流式首字节 TTFT (ms)</div>
+    <div class="pct-grid" id="pct-ttft"></div>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>状态码分布</h2></div>
+    <div id="status-dist"></div>
+    <div class="panel-head" style="margin-top:18px"><h2>端点分布</h2></div>
+    <div id="endpoint-dist"></div>
+  </section>
+</div>
+
+<div class="grid2">
+  <section class="panel">
+    <div class="panel-head"><h2>模型用量</h2><span class="hint">按客户端请求的模型名聚合</span></div>
+    <div id="models"></div>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>访问密钥用量</h2><span class="hint">需管理 Token</span></div>
+    <div id="clients"></div>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><h2>账号池状态</h2><span class="pill" id="pool-pill">加载中</span></div>
+  <div id="accounts"></div>
+</section>
+
+<div class="grid2">
+  <section class="panel">
+    <div class="panel-head"><h2>最近错误</h2></div>
+    <div id="errors"></div>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>最近请求</h2></div>
+    <div id="recent"></div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/charts.js"></script>
+<script src="/static/stats.js"></script>
+{% endblock %}

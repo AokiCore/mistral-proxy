@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block subtitle %}<span id="subtitle">加载中…</span>{% endblock %}
+
+{% block actions %}
+<label class="check"><input type="checkbox" id="auto">自动刷新</label>
+<button class="btn" id="btn-refresh">刷新</button>
+<button class="btn" id="btn-export">导出 CSV</button>
+{% endblock %}
+
+{% block content %}
+<section class="card">
+  <div class="toolbar">
+    <select id="f-hours">
+      <option value="1">近 1 小时</option>
+      <option value="24" selected>近 24 小时</option>
+      <option value="168">近 7 天</option>
+      <option value="720">近 30 天</option>
+      <option value="2160">近 90 天</option>
+    </select>
+    <select id="f-status">
+      <option value="">全部状态</option>
+      <option value="200">仅成功</option>
+      <option value="error">仅失败</option>
+      <option value="429">429 限流</option>
+      <option value="400">400 请求错误</option>
+      <option value="0">网络异常</option>
+    </select>
+    <select id="f-endpoint"><option value="">全部端点</option></select>
+    <select id="f-model"><option value="">全部模型</option></select>
+    <select id="f-key"><option value="">全部令牌</option></select>
+    <select id="f-stream">
+      <option value="">流式与非流式</option>
+      <option value="1">仅流式</option>
+      <option value="0">仅非流式</option>
+    </select>
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="f-search" placeholder="搜索错误/邮箱/模型…">
+    </div>
+    <button class="btn sm ghost" id="btn-reset">重置</button>
+  </div>
+  <div id="tbl"></div>
+</section>
+
+<div class="modal" id="detail-modal"><div class="modal-card wide">
+  <div class="modal-head"><h3>调用详情</h3><p id="detail-sub"></p></div>
+  <div class="modal-body"><dl class="props" id="detail-props"></dl></div>
+  <div class="modal-foot"><span class="spacer"></span>
+    <button class="btn primary" data-close>关闭</button></div>
+</div></div>
+{% endblock %}
+
+{% block scripts %}<script src="/static/logs.js"></script>{% endblock %}

@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}访问密钥{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>访问密钥</h1>
+    <p class="sub">签发给下游调用方的密钥，可独立设置速率、日配额与模型白名单</p>
+  </div>
+  <div class="toolbar">
+    <button class="btn primary" id="btn-new">签发新密钥</button>
+  </div>
+</div>
+
+<div class="banner" id="open-banner" style="display:none">
+  <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+  <span>当前没有启用调用方鉴权，<b>任何能访问本端口的人都可以直接用你的账号池</b>。签发一把密钥即可自动开启鉴权。</span>
+</div>
+
+<div class="notice" id="notice"></div>
+<div class="stat-grid" id="cards"></div>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>密钥列表</h2>
+    <span class="hint">密钥原文只在签发时显示一次，库里只存 SHA-256</span>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:30px"><input type="checkbox" id="allcb" class="cb"></th>
+          <th>名称</th><th>前缀</th><th>状态</th><th>速率上限</th><th>日 token 配额</th>
+          <th>模型白名单</th><th class="num">今日请求</th><th class="num">今日 tokens</th>
+          <th>最后使用</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>接入方式</h2></div>
+  <div class="modal-sub" style="margin:0">任意 OpenAI 兼容客户端，把 base_url 指到本网关即可。</div>
+  <div class="secret" style="border-color:var(--line-2);box-shadow:none" id="usage-sample"></div>
+</section>
+
+<div class="modal" id="new-modal"><div class="modal-box">
+  <h3>签发新密钥</h3>
+  <div class="modal-sub">留空表示不限制。签发后原文只显示这一次。</div>
+  <label>名称（用于识别用途）</label>
+  <input id="k-name" placeholder="例如 Cherry Studio / 我的脚本">
+  <div class="field-row">
+    <div>
+      <label>速率上限（次/分钟，0=不限）</label>
+      <input id="k-rpm" type="number" min="0" value="0">
+    </div>
+    <div>
+      <label>日 token 配额（0=不限）</label>
+      <input id="k-quota" type="number" min="0" value="0">
+    </div>
+  </div>
+  <div class="field-row">
+    <div>
+      <label>有效期（天，0=永久）</label>
+      <input id="k-ttl" type="number" min="0" value="0">
+    </div>
+    <div>
+      <label>模型白名单（逗号分隔，留空=全部）</label>
+      <input id="k-models" placeholder="mistral-small-latest, magistral-small-latest">
+    </div>
+  </div>
+  <div class="row" style="justify-content:flex-end;margin-top:16px">
+    <span class="err" id="new-err" style="margin-right:auto"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-new">签发</button>
+  </div>
+</div></div>
+
+<div class="modal" id="show-modal"><div class="modal-box">
+  <h3>密钥已签发</h3>
+  <div class="modal-sub">这是唯一一次显示完整密钥，关闭后无法找回。请立刻复制保存。</div>
+  <div class="secret" id="new-key"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:8px">
+    <button class="btn" id="copy-key">复制</button>
+    <button class="btn primary" data-close>我已保存</button>
+  </div>
+</div></div>
+
+<div class="modal" id="edit-modal"><div class="modal-box">
+  <h3>修改密钥</h3>
+  <div class="modal-sub" id="edit-sub"></div>
+  <label>名称</label>
+  <input id="e-name">
+  <div class="field-row">
+    <div><label>速率上限（次/分钟）</label><input id="e-rpm" type="number" min="0"></div>
+    <div><label>日 token 配额</label><input id="e-quota" type="number" min="0"></div>
+  </div>
+  <label>模型白名单（逗号分隔，留空=全部）</label>
+  <input id="e-models">
+  <div class="row" style="justify-content:flex-end;margin-top:16px">
+    <span class="err" id="edit-err" style="margin-right:auto"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-edit">保存</button>
+  </div>
+</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/keys.js"></script>
+{% endblock %}

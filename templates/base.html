@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{ title }} · Mistral Pool</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c6cf5'/%3E%3Cpath d='M17.8 4.5 8.5 18.2h6.2l-1 9.3 9.8-13.7h-6.3z' fill='%230a0b0f'/%3E%3C/svg%3E">
+<script>
+  /* 在首屏渲染前定好主题，避免闪一下白底 */
+  (function () {
+    var t = localStorage.getItem('theme')
+      || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="layout">
+
+<aside class="side" id="side">
+  <a class="side-brand" href="/">
+    <span class="brand-mark">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+    </span>
+    <span class="brand-text"><b>Mistral Pool</b><span>2API Gateway</span></span>
+  </a>
+
+  <nav class="side-nav">
+    <div class="nav-group">总览</div>
+    <a class="nav-item" href="/" {% if active == 'dashboard' %}aria-current="page"{% endif %}>
+      <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+      仪表盘
+    </a>
+    <a class="nav-item" href="/logs" {% if active == 'logs' %}aria-current="page"{% endif %}>
+      <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+      调用日志
+    </a>
+
+    <div class="nav-group">资源</div>
+    <a class="nav-item" href="/channels" {% if active == 'channels' %}aria-current="page"{% endif %}>
+      <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/></svg>
+      上游渠道
+      <span class="nav-count" id="nav-channels">—</span>
+    </a>
+    <a class="nav-item" href="/tokens" {% if active == 'tokens' %}aria-current="page"{% endif %}>
+      <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>
+      访问令牌
+      <span class="nav-count" id="nav-tokens">—</span>
+    </a>
+    <a class="nav-item" href="/models" {% if active == 'models' %}aria-current="page"{% endif %}>
+      <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+      模型
+      <span class="nav-count" id="nav-models">—</span>
+    </a>
+
+    <div class="nav-group">系统</div>
+    <a class="nav-item" href="/settings" {% if active == 'settings' %}aria-current="page"{% endif %}>
+      <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      设置
+    </a>
+  </nav>
+
+  <div class="side-foot">
+    <div class="status-line"><span class="dot live" id="status-dot"></span><span id="status-text">连接中…</span></div>
+    <div class="side-actions">
+      <button class="btn ghost" id="theme-toggle" title="切换主题"><span data-theme-icon></span></button>
+      <button class="btn ghost" id="btn-logout">
+        <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><path d="M21 12H9"/></svg>
+        退出
+      </button>
+    </div>
+  </div>
+</aside>
+
+<div class="main">
+  <header class="topbar">
+    <button class="icon-btn" id="side-toggle" aria-label="菜单">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/></svg>
+    </button>
+    <div>
+      <h1>{{ title }}</h1>
+      <div class="sub">{% block subtitle %}{% endblock %}</div>
+    </div>
+    <div class="topbar-actions">{% block actions %}{% endblock %}</div>
+  </header>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+</div>
+<script src="/static/icons.js"></script>
+<script src="/static/common.js"></script>
+<script src="/static/ui.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

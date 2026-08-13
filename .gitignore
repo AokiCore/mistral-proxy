@@ -1,0 +1,28 @@
+# ---- 凭据 / 敏感数据: 永远不要提交 ----
+mistral_keys.json
+mistral_keys.csv
+mistral_register.py
+*.har
+.private/
+.env
+.env.*
+config.toml
+config.json
+config.local.*
+
+# ---- 运行时产物 ----
+*.db
+*.db-wal
+*.db-shm
+proxy_usage.db*
+deploy.tgz
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/

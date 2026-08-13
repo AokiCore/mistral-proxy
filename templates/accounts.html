@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}上游账号{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>上游账号</h1>
+    <p class="sub">Mistral 账号池 · 每个账号独立计算 50 req/min 与 token 配额</p>
+  </div>
+  <div class="toolbar">
+    <input id="q" placeholder="搜索邮箱..." style="width:200px">
+    <select id="filter">
+      <option value="">全部状态</option>
+      <option value="ok">可用</option>
+      <option value="cooling">冷却中</option>
+      <option value="drained">额度尽</option>
+      <option value="disabled">已禁用</option>
+    </select>
+    <button class="btn" id="btn-import">导入</button>
+    <button class="btn" id="btn-add">添加</button>
+  </div>
+</div>
+
+<div class="stat-grid" id="cards"></div>
+<div class="notice" id="notice"></div>
+
+<div class="toolbar" style="margin-bottom:14px">
+  <span class="lbl" id="summary">加载中</span>
+  <span style="flex:1"></span>
+  <button class="btn sm" id="btn-reveal">显示完整 Key</button>
+  <button class="btn sm" id="btn-enable">批量启用</button>
+  <button class="btn sm" id="btn-disable">批量禁用</button>
+  <button class="btn sm danger" id="btn-remove">批量删除</button>
+</div>
+
+<section class="panel">
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:30px"><input type="checkbox" id="allcb" class="cb"></th>
+          <th>邮箱</th><th>API Key</th><th>状态</th><th>tokens 剩余</th>
+          <th>请求 剩余</th><th>在途</th><th>窗口重置</th><th>最近状态</th>
+          <th class="num">连续错误</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<div class="modal" id="imp-modal"><div class="modal-box">
+  <h3>导入账号</h3>
+  <div class="modal-sub">
+    粘贴 JSON 数组或 CSV 文本。出于安全考虑不支持填服务端文件路径 —— 导入本地文件请用启动参数
+    <span class="mono">--keys mistral_keys.json</span>。已删除过的邮箱会被墓碑记录挡住，需要先在下方恢复。
+  </div>
+  <textarea id="imp-content" placeholder='[{"email":"a@x.com","api_key":"..."}]&#10;或 CSV：email,api_key&#10;a@x.com,xxxx'></textarea>
+  <label>恢复被删除的账号（逗号分隔邮箱，可留空）</label>
+  <input id="imp-restore" placeholder="a@x.com, b@x.com">
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <span class="err" id="imp-err" style="margin-right:auto"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-import">导入</button>
+  </div>
+</div></div>
+
+<div class="modal" id="add-modal"><div class="modal-box">
+  <h3>添加单个账号</h3>
+  <div class="modal-sub">手动录入，会直接入库并在重启后保留</div>
+  <label>邮箱</label>
+  <input id="add-email" placeholder="user@example.com" autocomplete="off">
+  <label>API Key</label>
+  <input id="add-key" placeholder="API key" type="password" autocomplete="off">
+  <div class="row" style="justify-content:flex-end;margin-top:16px">
+    <span class="err" id="add-err" style="margin-right:auto"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-add">添加</button>
+  </div>
+</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/accounts.js"></script>
+{% endblock %}

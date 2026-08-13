@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>登录 · Mistral Pool</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c6cf5'/%3E%3Cpath d='M17.8 4.5 8.5 18.2h6.2l-1 9.3 9.8-13.7h-6.3z' fill='%230a0b0f'/%3E%3C/svg%3E">
+<script>
+  (function () {
+    var t = localStorage.getItem('theme')
+      || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <form class="auth-card" id="form">
+    <span class="brand-mark">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+    </span>
+    <h1>登录管理台</h1>
+    <p class="lede">Mistral Pool · OpenAI 兼容网关</p>
+
+    <div class="form-group">
+      <label class="field" for="password">管理密码</label>
+      <input type="password" id="password" name="password" placeholder="••••••••"
+             autocomplete="current-password" autofocus required>
+    </div>
+
+    <div class="auth-row">
+      <label class="check"><input type="checkbox" id="remember" checked>记住我 30 天</label>
+      <span class="field-error" id="err" style="min-height:0"></span>
+    </div>
+
+    <button class="btn primary block" type="submit" id="submit">进入</button>
+
+    <div class="auth-foot">
+      密码在配置文件 <code>config.toml</code> 的 <code>admin_password</code> 里设置；
+      没设过就由服务端首次启动时生成并打印在控制台。<br>
+      登录状态存在 HttpOnly Cookie，不经过 URL。
+    </div>
+  </form>
+</div>
+
+<script>
+const NEXT = {{ next | tojson }};
+const form = document.getElementById('form');
+const err = document.getElementById('err');
+const submit = document.getElementById('submit');
+
+form.addEventListener('submit', async function (ev) {
+  ev.preventDefault();
+  err.textContent = '';
+  submit.disabled = true;
+  submit.textContent = '验证中…';
+  try {
+    const r = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        password: document.getElementById('password').value,
+        remember: document.getElementById('remember').checked,
+        next: NEXT,
+      }),
+    });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || ('登录失败 ' + r.status));
+    location.href = body.next || '/';
+  } catch (e) {
+    err.textContent = e.message;
+    submit.disabled = false;
+    submit.textContent = '进入';
+    document.getElementById('password').select();
+  }
+});
+</script>
+</body>
+</html>

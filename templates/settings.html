@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block subtitle %}运行配置、安全与数据维护{% endblock %}
+
+{% block content %}
+<div class="cols cols-2">
+  <section class="card">
+    <div class="card-head"><h2>运行配置</h2><span class="spacer"></span>
+      <span class="muted">立即生效，重启后回到配置文件</span></div>
+    <div class="card-body">
+      <div class="form-group">
+        <label class="field">思考内容输出格式</label>
+        <select id="reasoning-format">
+          <option value="reasoning_content">reasoning_content —— 兼容最广（DeepSeek / OpenRouter 系）</option>
+          <option value="think_tags">think_tags —— 内联 &lt;think&gt; 标签</option>
+          <option value="passthrough">passthrough —— 上游原始 chunk 数组</option>
+          <option value="strip">strip —— 丢弃思考内容</option>
+        </select>
+        <div class="muted" style="margin-top:6px">单次请求可用 <code>X-Reasoning-Format</code> 头覆盖。</div>
+      </div>
+      <div class="form-group">
+        <label class="field">故障转移最多尝试的渠道数</label>
+        <input id="max-retry" type="number" min="1" max="20">
+        <div class="muted" style="margin-top:6px">遇到 429 或 5xx 时最多换几个上游账号重试。</div>
+      </div>
+      <button class="btn primary" id="save-config">保存</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>运行状态</h2></div>
+    <div class="card-body"><dl class="props" id="runtime"></dl></div>
+  </section>
+</div>
+
+<div class="cols cols-2">
+  <section class="card">
+    <div class="card-head"><h2>管理密码</h2></div>
+    <div class="card-body" id="password-box"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>登录会话</h2></div>
+    <div class="card-body">
+      <p class="muted" style="line-height:1.7;margin-bottom:14px">
+        登录态存在 HttpOnly Cookie 里，签名密钥由密码与服务端 salt 派生。
+        轮换 salt 会让所有设备上的登录立刻失效，包括当前这台。
+      </p>
+      <button class="btn danger" id="revoke-sessions">登出所有设备</button>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head"><h2>数据维护</h2><span class="spacer"></span>
+    <span class="muted">调用日志存在本地 SQLite</span></div>
+  <div class="card-body">
+    <div class="toolbar" style="padding:0;border:0">
+      <span class="muted">清理早于</span>
+      <select id="cleanup-days" style="width:auto">
+        <option value="7">7 天</option>
+        <option value="30" selected>30 天</option>
+        <option value="90">90 天</option>
+        <option value="180">180 天</option>
+      </select>
+      <span class="muted">的调用日志</span>
+      <button class="btn danger" id="do-cleanup">执行清理</button>
+      <span class="spacer"></span>
+      <button class="btn" id="export-all">导出近 30 天 CSV</button>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>接入信息</h2></div>
+  <div class="card-body"><div class="pre" id="endpoints"></div></div>
+</section>
+{% endblock %}
+
+{% block scripts %}<script src="/static/settings.js"></script>{% endblock %}

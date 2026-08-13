@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}账号管理{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1>账号管理</h1>
+    <p class="sub">导入 / 添加 / 启停 / 删除账号池</p>
+  </div>
+  <div class="toolbar">
+    <input id="q" placeholder="搜索邮箱..." style="width:220px">
+    <button class="btn" id="btn-import">导入账号</button>
+    <button class="btn" id="btn-add">添加单个</button>
+  </div>
+</div>
+
+<div class="toolbar" style="margin-bottom:16px">
+  <span class="lbl" id="summary">加载中</span>
+  <span style="flex:1"></span>
+  <button class="btn" id="btn-reveal">显示完整 Key</button>
+  <button class="btn" id="btn-enable">批量启用</button>
+  <button class="btn" id="btn-disable">批量禁用</button>
+  <button class="btn danger" id="btn-remove">批量删除</button>
+</div>
+
+<div class="notice" id="notice"></div>
+
+<section class="panel">
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:30px"><input type="checkbox" id="allcb" class="cb"></th>
+          <th>邮箱</th><th>API Key</th><th>状态</th><th>tokens 剩余/上限</th>
+          <th>请求 剩余/上限</th><th>在途</th><th>窗口重置</th><th>最近状态</th>
+          <th>连续错误</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<div class="modal" id="imp-modal"><div class="modal-box">
+  <h3>导入账号</h3>
+  <div class="modal-sub">
+    粘贴 JSON 数组或 CSV 文本。出于安全考虑不再支持填服务端文件路径 —— 导入本地文件请用启动参数
+    <span class="mono">--keys mistral_keys.json</span>。
+  </div>
+  <textarea id="imp-content" placeholder='[{"email":"a@x.com","api_key":"..."}]&#10;或 CSV：email,api_key&#10;a@x.com,xxxx'></textarea>
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <span class="err" id="imp-err" style="margin-right:auto"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-import">导入</button>
+  </div>
+</div></div>
+
+<div class="modal" id="add-modal"><div class="modal-box">
+  <h3>添加单个账号</h3>
+  <div class="modal-sub">手动输入邮箱与 API Key，会直接入库并在重启后保留</div>
+  <label>邮箱</label>
+  <input id="add-email" placeholder="user@example.com" style="width:100%" autocomplete="off">
+  <label>API Key</label>
+  <input id="add-key" placeholder="API key" style="width:100%" type="password" autocomplete="off">
+  <div class="row" style="justify-content:flex-end;margin-top:16px">
+    <span class="err" id="add-err" style="margin-right:auto"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-add">添加</button>
+  </div>
+</div></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/admin.js"></script>
+{% endblock %}

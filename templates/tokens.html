@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block subtitle %}签发给下游调用方的密钥，可独立限速与限额{% endblock %}
+
+{% block actions %}<button class="btn primary" id="btn-new">签发令牌</button>{% endblock %}
+
+{% block content %}
+<div class="callout" id="open-callout" style="display:none">
+  <svg class="ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+  <span>还没有启用调用方鉴权，<b>任何能访问本端口的人都能直接消耗你的账号池</b>。签发一把令牌即可自动开启。</span>
+</div>
+
+<div class="kpis" id="kpis"></div>
+
+<section class="card">
+  <div class="toolbar">
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="q" placeholder="搜索名称…">
+    </div>
+    <span class="spacer"></span>
+    <span class="muted" id="sel-count"></span>
+    <button class="btn sm" id="btn-enable" disabled>启用</button>
+    <button class="btn sm" id="btn-disable" disabled>禁用</button>
+    <button class="btn sm danger" id="btn-revoke" disabled>吊销</button>
+  </div>
+  <div id="tbl"></div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>接入方式</h2><span class="spacer"></span>
+    <span class="muted">任意 OpenAI 兼容客户端</span></div>
+  <div class="card-body"><div class="pre" id="usage"></div></div>
+</section>
+
+<div class="modal" id="new-modal"><div class="modal-card">
+  <div class="modal-head"><h3>签发令牌</h3><p>留空或填 0 表示不限制。明文只在签发后显示一次。</p></div>
+  <div class="modal-body">
+    <div class="form-group"><label class="field">名称</label>
+      <input id="k-name" placeholder="例如 Cherry Studio / 我的脚本"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="field">速率上限（次/分钟）</label>
+        <input id="k-rpm" type="number" min="0" value="0"></div>
+      <div class="form-group"><label class="field">日 token 配额</label>
+        <input id="k-quota" type="number" min="0" value="0"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="field">有效期（天，0=永久）</label>
+        <input id="k-ttl" type="number" min="0" value="0"></div>
+      <div class="form-group"><label class="field">模型白名单（逗号分隔）</label>
+        <input id="k-models" placeholder="留空 = 全部模型"></div>
+    </div>
+  </div>
+  <div class="modal-foot">
+    <span class="field-error" id="new-err"></span><span class="spacer"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-new">签发</button>
+  </div>
+</div></div>
+
+<div class="modal" id="show-modal"><div class="modal-card">
+  <div class="modal-head"><h3>令牌已签发</h3>
+    <p>这是唯一一次显示完整令牌，关闭后无法找回，请立刻复制保存。</p></div>
+  <div class="modal-body"><div class="secret" id="new-key"></div></div>
+  <div class="modal-foot"><span class="spacer"></span>
+    <button class="btn" id="copy-key">复制</button>
+    <button class="btn primary" data-close>我已保存</button></div>
+</div></div>
+
+<div class="modal" id="edit-modal"><div class="modal-card">
+  <div class="modal-head"><h3>修改令牌</h3><p id="edit-sub"></p></div>
+  <div class="modal-body">
+    <div class="form-group"><label class="field">名称</label><input id="e-name"></div>
+    <div class="form-row">
+      <div class="form-group"><label class="field">速率上限（次/分钟）</label>
+        <input id="e-rpm" type="number" min="0"></div>
+      <div class="form-group"><label class="field">日 token 配额</label>
+        <input id="e-quota" type="number" min="0"></div>
+    </div>
+    <div class="form-group"><label class="field">模型白名单（逗号分隔，留空=全部）</label>
+      <input id="e-models"></div>
+  </div>
+  <div class="modal-foot">
+    <span class="field-error" id="edit-err"></span><span class="spacer"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-edit">保存</button>
+  </div>
+</div></div>
+{% endblock %}
+
+{% block scripts %}<script src="/static/tokens.js"></script>{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block subtitle %}<span id="subtitle">加载中…</span>{% endblock %}
+
+{% block actions %}
+<button class="btn" id="btn-alias">添加别名</button>
+<button class="btn primary" id="btn-sync">同步上游</button>
+{% endblock %}
+
+{% block content %}
+<div class="kpis" id="kpis"></div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>自定义别名</h2><span class="spacer"></span>
+    <span class="muted">让写死模型名的客户端直接接入，例如把 gpt-4o 指到 mistral-large-latest</span>
+  </div>
+  <div class="card-body flush"><div id="alias-tbl"></div></div>
+</section>
+
+<section class="card">
+  <div class="toolbar">
+    <div class="search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="q" placeholder="搜索模型…">
+    </div>
+    <select id="cap">
+      <option value="">全部能力</option>
+      <option value="completion_chat">对话</option>
+      <option value="reasoning">推理</option>
+      <option value="vision">视觉</option>
+      <option value="function_calling">工具调用</option>
+      <option value="ocr">OCR</option>
+      <option value="audio">音频</option>
+      <option value="moderation">审核</option>
+    </select>
+  </div>
+  <div id="tbl"></div>
+</section>
+
+<div class="modal" id="alias-modal"><div class="modal-card">
+  <div class="modal-head"><h3>添加别名</h3>
+    <p>别名会出现在 /v1/models 列表里，请求时自动转发到目标模型。</p></div>
+  <div class="modal-body">
+    <div class="form-group"><label class="field">别名（客户端使用的名字）</label>
+      <input id="a-alias" placeholder="gpt-4o"></div>
+    <div class="form-group"><label class="field">目标模型</label>
+      <select id="a-target"></select></div>
+  </div>
+  <div class="modal-foot">
+    <span class="field-error" id="a-err"></span><span class="spacer"></span>
+    <button class="btn" data-close>取消</button>
+    <button class="btn primary" id="do-alias">添加</button>
+  </div>
+</div></div>
+{% endblock %}
+
+{% block scripts %}<script src="/static/models.js"></script>{% endblock %}
