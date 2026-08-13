@@ -112,7 +112,14 @@ async def _budget_checker(ctx: AppContext) -> None:
                 ctx.pool.set_console_session(acc, session)
                 ctx.pool.update_budget(acc, budget)
                 if budget.exhausted:
-                    log.info("[budget] %s 额度已用尽，停用至 %s", acc.email, budget.reset_at)
+                    log.info("[budget] %s 额度已用尽，尝试删组织重建", acc.email)
+                    result = await ctx.rebuilder.rebuild(acc)
+                    if ctx.pool.apply_rebuild(acc, result):
+                        log.info("[budget] %s 重建成功，新 key %s…，已放回池子",
+                                 acc.email, acc.api_key[:8])
+                    else:
+                        log.warning("[budget] %s 重建失败：%s",
+                                    acc.email, result.error)
         except BillingError as e:
             log.warning("[budget] 查询失败: %s", e)
         except Exception:

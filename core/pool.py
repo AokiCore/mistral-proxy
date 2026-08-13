@@ -419,6 +419,33 @@ class AccountPool:
         if self.store:
             self.store.save_account_records([acc.to_record()])
 
+    def apply_rebuild(self, acc: Account, result) -> bool:
+        """把一次组织重建的结果写回账号。
+
+        成功：用新的 org_id/workspace_id/api_key/key_id/session 覆盖旧值，
+              清掉 exhausted_until 和额度快照（新组织是满血的），状态置 rebuilt。
+        失败：什么都不动，返回 False（账号仍保持耗尽，由调用方决定后续）。
+        """
+        if not result.ok:
+            return False
+        with self._lock:
+            acc.org_id = result.org_id
+            acc.workspace_id = result.workspace_id
+            acc.api_key = result.api_key
+            acc.key_id = result.key_id
+            if result.session:
+                acc.console_session = result.session
+            acc.exhausted_until = 0.0
+            acc.budget_used_pct = 0.0
+            acc.budget_total = 0.0
+            acc.budget_reset_at = ""
+            acc.budget_checked_at = 0.0
+            acc.last_status = "rebuilt"
+            rec = acc.to_record()
+        if self.store:
+            self.store.save_account_records([rec])
+        return True
+
     def mark_exhausted(self, acc: Account, until: float, used_pct: float = 100.0) -> None:
         """月度美元额度花光: 整号所有模型都会 402, 直到下月重置才恢复。"""
         with self._lock:

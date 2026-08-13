@@ -21,6 +21,7 @@ from core.clientkeys import ClientKey, ClientKeyStore, QuotaError
 from core.config import Settings
 from core.models import ModelRegistry
 from core.openai_compat import error_envelope, normalize_error
+from core.org_rebuild import OrgRebuilder
 from core.pool import AccountPool
 from core.store import UsageStore
 from core.upstream import Upstream, UpstreamFailure, UpstreamRejected
@@ -52,6 +53,7 @@ class AppContext:
     sem: asyncio.Semaphore
     started_at: float = 0.0
     budgets: BudgetClient = field(default_factory=BudgetClient)
+    rebuilder: OrgRebuilder = field(default_factory=OrgRebuilder)
     login_throttle: LoginThrottle = field(default_factory=LoginThrottle)
 
 
