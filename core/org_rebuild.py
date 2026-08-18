@@ -165,6 +165,9 @@ class OrgRebuilder:
         async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport,
                                      cookies=cookies, follow_redirects=True) as c:
             r = await c.delete(url, headers=self._headers(csrf))
+        # 404 = 组织已经不存在了（可能被 Mistral 删了），跳过直接建新的
+        if r.status_code == 404:
+            return
         if r.status_code != 200:
             raise BillingError(f"删组织失败 {r.status_code}：{r.text[:200]}")
 

@@ -5,6 +5,7 @@
 
 端点:
   POST /v1/chat/completions   OpenAI 兼容对话代理(流式/非流式, 429/5xx 自动换账号)
+  POST /v1/conversations      Mistral Conversations API 透传(GLM-5.2 等)
   POST /v1/embeddings         向量化
   POST /v1/moderations        内容审核
   GET  /v1/models             模型清单  GET /v1/models/{id} 单个模型
@@ -28,7 +29,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from api import admin, auth_routes, chat, openai_api, pages
+from api import admin, auth_routes, chat, conversations, openai_api, pages
 from api.deps import AppContext
 from core.auth import AuthManager
 from core.billing import BillingError, BudgetClient
@@ -233,6 +234,7 @@ def create_app(settings: Settings, client_factory=None) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=pages.STATIC_DIR), name="static")
     app.include_router(chat.router)
+    app.include_router(conversations.router)
     app.include_router(openai_api.router)
     app.include_router(admin.router)
     app.include_router(auth_routes.router)

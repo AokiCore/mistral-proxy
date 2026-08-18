@@ -17,6 +17,9 @@ from api.deps import (APIError, client_auth, enforce_quota, get_ctx, now_ms,
                       read_json_body, upstream_error_response)
 from core import reasoning as R
 from core.clientkeys import ClientKey
+from core.conversations import (chat_to_conversations,
+                                conversations_response_to_chat,
+                                conversations_stream_events, needs_conversations)
 from core.openai_compat import (RequestError, clean_usage, error_envelope,
                                 normalize_chat_request, normalize_chat_response,
                                 normalize_stream_event)
@@ -50,6 +53,12 @@ async def chat_completions(request: Request, key: ClientKey = Depends(client_aut
     info = ctx.registry.resolve(requested_model)
     upstream_model = info.id if info else requested_model
     supports_reasoning = info.supports_reasoning if info else True
+
+    # GLM-5.2 等 Z.ai 模型只能走 /v1/conversations，chat/completions 会 429。
+    # 在这里把请求转成 conversations 格式，走单独的转发路径。
+    if needs_conversations(upstream_model):
+        return await _conversations_proxy(ctx, payload, upstream_model,
+                                           requested_model, key, t0)
 
     try:
         body, meta = normalize_chat_request(payload, supports_reasoning,
@@ -89,6 +98,97 @@ async def chat_completions(request: Request, key: ClientKey = Depends(client_aut
         generator, media_type="text/event-stream",
         headers={"X-Pool-Account": lease.account_email, "Cache-Control": "no-cache",
                  "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+
+
+async def _conversations_proxy(ctx, payload: dict, upstream_model: str,
+                               requested_model: str, key: ClientKey, t0: float):
+    """把 chat/completions 请求转成 conversations 格式发给上游，再把响应转回来。"""
+    body, stream = chat_to_conversations(payload)
+    body["model"] = upstream_model
+    est = est_tokens(payload.get("messages"))
+
+    try:
+        lease = await ctx.upstream.open(
+            "POST", "/conversations", json_body=body, est_tokens=est, stream=stream)
+    except (UpstreamRejected, UpstreamFailure) as e:
+        return upstream_error_response(ctx, e, upstream_model=upstream_model,
+                                       endpoint=ENDPOINT, requested_model=requested_model,
+                                       key=key, t0=t0, stream=stream)
+
+    if not stream:
+        try:
+            raw = await lease.read()
+        finally:
+            await lease.aclose()
+        return _finish_conv_nonstream(ctx, raw, lease, t0, requested_model,
+                                      upstream_model, key)
+
+    generator = _conv_stream(ctx, lease, t0, requested_model, upstream_model, key)
+    return StreamingResponse(
+        generator, media_type="text/event-stream",
+        headers={"X-Pool-Account": lease.account_email, "Cache-Control": "no-cache",
+                 "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+
+
+def _finish_conv_nonstream(ctx, raw: bytes, lease, t0: float, requested_model: str,
+                           upstream_model: str, key: ClientKey) -> Response:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        ctx.store.record(lease.account_email, upstream_model, ENDPOINT, 502,
+                         duration_ms=now_ms(t0), attempts=lease.attempts,
+                         requested_model=requested_model, client_key=key.id,
+                         error="upstream returned non-JSON body")
+        return JSONResponse(error_envelope("Upstream returned a non-JSON body", "api_error"),
+                            status_code=502)
+
+    body = conversations_response_to_chat(parsed, requested_model)
+    usage = body.get("usage") or {}
+    total = usage.get("total_tokens", 0)
+    ctx.keys.note_usage(key, total)
+    ctx.store.record(lease.account_email, upstream_model, ENDPOINT, 200,
+                     prompt_tokens=usage.get("prompt_tokens", 0),
+                     completion_tokens=usage.get("completion_tokens", 0),
+                     duration_ms=now_ms(t0), attempts=lease.attempts,
+                     requested_model=requested_model, client_key=key.id)
+    return Response(json.dumps(body, ensure_ascii=False).encode("utf-8"),
+                    status_code=200, media_type="application/json",
+                    headers={"X-Pool-Account": lease.account_email,
+                             "X-Pool-Attempts": str(lease.attempts)})
+
+
+async def _conv_stream(ctx, lease, t0: float, requested_model: str,
+                       upstream_model: str, key: ClientKey):
+    """把 conversations SSE 流转成 chat.completion.chunk 流。"""
+    status = 200
+    error = ""
+    usage = None
+    done_marker = b'[DONE]'
+    try:
+        async for chunk in conversations_stream_events(lease, requested_model):
+            yield chunk
+            # 从收尾块里抠 usage 记账
+            if isinstance(chunk, bytes):
+                try:
+                    data = chunk[6:].strip()  # skip "data: "
+                    if data and data != done_marker:
+                        ev = json.loads(data)
+                        if ev.get("usage"):
+                            usage = ev["usage"]
+                except (json.JSONDecodeError, ValueError):
+                    pass
+    except Exception as e:
+        status, error = 0, f"stream {type(e).__name__}: {e}"
+    finally:
+        # lease 已在 conversations_stream_events 的 finally 里 aclose
+        u = usage or {}
+        ctx.keys.note_usage(key, u.get("total_tokens", 0))
+        ctx.store.record(lease.account_email, upstream_model, ENDPOINT, status,
+                         prompt_tokens=u.get("prompt_tokens", 0),
+                         completion_tokens=u.get("completion_tokens", 0),
+                         duration_ms=now_ms(t0), stream=True, attempts=lease.attempts,
+                         requested_model=requested_model, client_key=key.id,
+                         error=error[:160])
 
 
 def _finish_nonstream(ctx, raw: bytes, lease, mode: str, t0: float,

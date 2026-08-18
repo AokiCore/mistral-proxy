@@ -138,6 +138,17 @@ class Upstream:
                         on_attempt_failed(account, status, body, last_error)
                     continue
 
+                # 401 = API key 失效（被删/过期），换号重试，并长时间冷却避免反复试。
+                if status == 401:
+                    body = await response.aread()
+                    await response.aclose()
+                    response = None
+                    self.pool.mark_error(account, status, retry_after=86400.0)
+                    last_status, last_error = status, body[:200].decode("utf-8", "replace")
+                    if on_attempt_failed:
+                        on_attempt_failed(account, status, body, last_error)
+                    continue
+
                 if status == 429 or status >= 500:
                     retry_after = _retry_after(response.headers)
                     body = await response.aread()
