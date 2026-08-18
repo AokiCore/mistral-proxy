@@ -71,53 +71,60 @@ async def _model_syncer(ctx: AppContext) -> None:
 
 
 def _pick_for_budget_check(pool, stale_seconds: float, now: float):
-    """挑一个最该查额度的账号。
+    """挑一个最该查额度的 Org。
 
-    查一次要登控制台、约 2.5 秒 370KB，所以只查真花过钱的账号：
+    查一次要登控制台、约 2.5 秒 370KB，所以只查真花过钱的 Org：
     用过但从没查过的排最前，其次是查过之后又用过的，最后是单纯过期的。
-    闲置账号永远轮不到，池子空转时这个任务几乎不干活。
     """
     best, best_rank = None, ()
-    for a in pool.accounts:
-        if not a.enabled or not a.last_used:
+    for acc in pool.accounts:
+        if not acc.enabled:
             continue
-        if not a.console_session and not a.mistral_password:
-            continue          # 既没会话也没密码，查不了
-        if a.exhausted_until > now:
-            continue          # 已知花光了，等下月重置，没必要反复查
-        if a.budget_checked_at <= 0:
-            rank = (0, -a.last_used)
-        elif a.last_used > a.budget_checked_at:
-            rank = (1, a.budget_checked_at)
-        elif now - a.budget_checked_at > stale_seconds:
-            rank = (2, a.budget_checked_at)
-        else:
-            continue
-        if best is None or rank < best_rank:
-            best, best_rank = a, rank
+        for org in acc.orgs:
+            if not org.last_used:
+                continue
+            if not (acc.console_session or acc.mistral_password):
+                continue
+            if org.exhausted_until > now:
+                continue
+            if org.budget_checked_at <= 0:
+                rank = (0, -org.last_used)
+            elif org.last_used > org.budget_checked_at:
+                rank = (1, org.budget_checked_at)
+            elif now - org.budget_checked_at > stale_seconds:
+                rank = (2, org.budget_checked_at)
+            else:
+                continue
+            if best is None or rank < best_rank:
+                best, best_rank = org, rank
     return best
 
 
 async def _budget_checker(ctx: AppContext) -> None:
-    """慢速轮询账号的月度美元额度，把花光的号从调度里摘掉。"""
+    """慢速轮询 Org 的月度美元额度，把花光的 Org 标记停用，建新 Org 替补。"""
     settings = ctx.settings
     stale = max(600.0, settings.budget_stale_hours * 3600.0)
     await asyncio.sleep(15.0)
     while True:
         try:
-            acc = await asyncio.to_thread(
+            org = await asyncio.to_thread(
                 _pick_for_budget_check, ctx.pool, stale, time.time())
-            if acc is not None:
+            if org is not None:
+                # 找到 org 所属的 Account
+                acc = ctx.pool._find(org.email)
+                if acc is None:
+                    continue
                 budget, session = await ctx.budgets.fetch(
                     acc.email, acc.mistral_password, acc.console_session)
                 ctx.pool.set_console_session(acc, session)
-                ctx.pool.update_budget(acc, budget)
+                ctx.pool.update_budget(org, budget)
                 if budget.exhausted:
-                    log.info("[budget] %s 额度已用尽，尝试删组织重建", acc.email)
+                    log.info("[budget] %s/%s 额度已用尽，创建新组织", acc.email, org.org_id[:12])
                     result = await ctx.rebuilder.rebuild(acc)
-                    if ctx.pool.apply_rebuild(acc, result):
-                        log.info("[budget] %s 重建成功，新 key %s…，已放回池子",
-                                 acc.email, acc.api_key[:8])
+                    new_org = ctx.pool.add_org(acc, result)
+                    if new_org:
+                        log.info("[budget] %s 新组织创建成功，新 key %s…，已加入池子",
+                                 acc.email, new_org.api_key[:8])
                     else:
                         log.warning("[budget] %s 重建失败：%s",
                                     acc.email, result.error)

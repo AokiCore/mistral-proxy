@@ -109,7 +109,8 @@ async def _conversations_proxy(ctx, payload: dict, upstream_model: str,
 
     try:
         lease = await ctx.upstream.open(
-            "POST", "/conversations", json_body=body, est_tokens=est, stream=stream)
+            "POST", "/conversations", json_body=body, est_tokens=est,
+            stream=stream, skip_limits=True)
     except (UpstreamRejected, UpstreamFailure) as e:
         return upstream_error_response(ctx, e, upstream_model=upstream_model,
                                        endpoint=ENDPOINT, requested_model=requested_model,

@@ -49,10 +49,11 @@ class OrgRebuilder:
         self._transport = transport
 
     async def rebuild(self, acc) -> RebuildResult:
-        """对一个已耗尽额度的账号执行重建。acc 是 core.pool.Account。"""
-        old_org_id = (acc.org_id or "").strip()
-        if not old_org_id:
-            return RebuildResult(ok=False, error="账号没有 org_id，不知道删哪个组织")
+        """对一个已耗尽额度的账号执行重建：建新组织 + 发新 key。
+
+        不删旧组织（旧组织额度耗尽后等下月重置，保留不动）。
+        新组织有独立的 $10 额度，新 key 立即可用。
+        """
         if not (acc.console_session or acc.mistral_password):
             return RebuildResult(ok=False, error="既没会话也没密码，登不进控制台")
 
@@ -63,7 +64,6 @@ class OrgRebuilder:
 
         try:
             csrf = self._csrf_from(cookies)
-            await self._delete_org(cookies, csrf, old_org_id)
             new_org = await self._create_org(cookies, csrf)
             new_ws = await self._default_workspace(cookies, csrf)
             new_key, new_key_id = await self._create_key(cookies, csrf, new_ws)

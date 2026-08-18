@@ -213,7 +213,9 @@ async def refresh_budget(request: Request, payload: dict = Body(...)):
             failed.append({"email": email, "error": str(e)})
             continue
         ctx.pool.set_console_session(acc, session)
-        ctx.pool.update_budget(acc, budget)
+        # 更新所有 Org 的额度
+        for org in acc.orgs:
+            ctx.pool.update_budget(org, budget)
         done.append({"email": email, **budget.to_dict()})
     ctx.pool.save_states()
     return {"checked": done, "failed": failed}

@@ -16,25 +16,23 @@ import time
 
 log = logging.getLogger("store")
 
-ACCOUNT_FIELDS = ("email", "api_key", "email_password", "mistral_password",
-                  "org_id", "workspace_id", "key_id", "org_tier", "created_at",
-                  "console_session")
+ACCOUNT_FIELDS = ("email", "email_password", "mistral_password", "console_session")
 
-# 注册时顺手带回来的控制台会话（有效期 90 天），查额度用，省掉密码登录
-RECORD_MIGRATIONS = {"console_session": "TEXT"}
+# 组织级别凭据（一个账号可以有多个组织）
+ORG_FIELDS = ("email", "org_id", "workspace_id", "key_id", "api_key", "org_tier",
+              "created_at")
 
-STATE_FIELDS = ("email", "enabled", "limit_tokens", "remaining_tokens", "limit_req",
-                "remaining_req", "window_start", "cooldown_until", "last_used",
-                "last_status", "consecutive_errors", "last_remaining_after",
-                "budget_used_pct", "budget_total", "budget_reset_at",
-                "budget_checked_at", "exhausted_until")
+# 组织级别运行时状态
+ORG_STATE_FIELDS = ("email", "org_id", "enabled", "limit_tokens", "remaining_tokens",
+                    "limit_req", "remaining_req", "window_start", "cooldown_until",
+                    "last_used", "last_status", "consecutive_errors",
+                    "last_remaining_after", "budget_used_pct", "budget_total",
+                    "budget_reset_at", "budget_checked_at", "exhausted_until")
 
-# 免费档是每月美元额度而非 token 配额，耗尽后整号 402，这几列记录额度状态
-ACCOUNT_MIGRATIONS = {
-    "budget_used_pct": "REAL DEFAULT 0", "budget_total": "REAL DEFAULT 0",
-    "budget_reset_at": "TEXT", "budget_checked_at": "REAL DEFAULT 0",
-    "exhausted_until": "REAL DEFAULT 0",
-}
+# 兼容旧库的 account_records 列（迁移用）
+LEGACY_ACCOUNT_FIELDS = ("email", "api_key", "email_password", "mistral_password",
+                         "org_id", "workspace_id", "key_id", "org_tier", "created_at",
+                         "console_session")
 
 USAGE_FIELDS = ("ts", "account", "model", "requested_model", "endpoint", "status",
                 "prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens",
@@ -97,29 +95,34 @@ class UsageStore:
             c.execute("CREATE INDEX IF NOT EXISTS idx_req_acc ON requests(account)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_req_ck ON requests(client_key, ts)")
 
-            c.execute("""CREATE TABLE IF NOT EXISTS accounts (
-                email TEXT PRIMARY KEY,
-                enabled INTEGER, limit_tokens INTEGER, remaining_tokens INTEGER,
+            # ---- 账号级别凭据（email 唯一）----
+            c.execute("""CREATE TABLE IF NOT EXISTS account_records (
+                email TEXT PRIMARY KEY, email_password TEXT,
+                mistral_password TEXT, console_session TEXT)""")
+
+            # ---- 组织级别凭据（email + org_id 唯一）----
+            c.execute("""CREATE TABLE IF NOT EXISTS org_records (
+                email TEXT, org_id TEXT, workspace_id TEXT, key_id TEXT,
+                api_key TEXT, org_tier TEXT, created_at TEXT,
+                PRIMARY KEY (email, org_id))""")
+
+            # ---- 组织级别运行时状态 ----
+            c.execute("""CREATE TABLE IF NOT EXISTS org_states (
+                email TEXT, org_id TEXT, enabled INTEGER,
+                limit_tokens INTEGER, remaining_tokens INTEGER,
                 limit_req INTEGER, remaining_req INTEGER, window_start REAL,
                 cooldown_until REAL, last_used REAL, last_status TEXT,
                 consecutive_errors INTEGER, last_remaining_after TEXT,
                 budget_used_pct REAL DEFAULT 0, budget_total REAL DEFAULT 0,
                 budget_reset_at TEXT, budget_checked_at REAL DEFAULT 0,
-                exhausted_until REAL DEFAULT 0)""")
-            have = {r["name"] for r in c.execute("PRAGMA table_info(accounts)")}
-            for column, decl in ACCOUNT_MIGRATIONS.items():
-                if column not in have:
-                    c.execute(f"ALTER TABLE accounts ADD COLUMN {column} {decl}")
-            c.execute("""CREATE TABLE IF NOT EXISTS account_records (
-                email TEXT PRIMARY KEY, api_key TEXT, email_password TEXT,
-                mistral_password TEXT, org_id TEXT, workspace_id TEXT,
-                key_id TEXT, org_tier TEXT, created_at TEXT, console_session TEXT)""")
-            have = {r["name"] for r in c.execute("PRAGMA table_info(account_records)")}
-            for column, decl in RECORD_MIGRATIONS.items():
-                if column not in have:
-                    c.execute(f"ALTER TABLE account_records ADD COLUMN {column} {decl}")
+                exhausted_until REAL DEFAULT 0,
+                PRIMARY KEY (email, org_id))""")
+
             c.execute("""CREATE TABLE IF NOT EXISTS deleted_accounts (
                 email TEXT PRIMARY KEY, ts REAL)""")
+            c.execute("""CREATE TABLE IF NOT EXISTS deleted_orgs (
+                email TEXT, org_id TEXT, ts REAL,
+                PRIMARY KEY (email, org_id))""")
             c.execute("""CREATE TABLE IF NOT EXISTS meta (
                 k TEXT PRIMARY KEY, v TEXT)""")
             c.execute("""CREATE TABLE IF NOT EXISTS client_keys (
@@ -127,6 +130,9 @@ class UsageStore:
                 enabled INTEGER, created_at REAL, expires_at REAL, rpm_limit INTEGER,
                 daily_token_limit INTEGER, allowed_models TEXT,
                 total_requests INTEGER, total_tokens INTEGER, last_used REAL)""")
+
+            # ---- 从旧 schema 迁移 ----
+            self._migrate_legacy(c)
 
     # ---------- 用量写入 (异步批量) ----------
 
@@ -257,6 +263,105 @@ class UsageStore:
                 (since,)).fetchall()
         return {r["client_key"]: {"requests": r["n"], "tokens": r["tok"]} for r in rows}
 
+    # ---------- 旧 schema 迁移 ----------
+
+    def _migrate_legacy(self, c) -> None:
+        """从旧的 account_records/accounts 表迁移到新的 account_records + org_records + org_states。"""
+        # 直接用游标查 meta，不调 self.get_meta（避免嵌套锁/事务死锁）
+        row = c.execute("SELECT v FROM meta WHERE k='schema_v2'").fetchone()
+        if row and row["v"]:
+            return
+
+        # 检查旧 account_records 是否存在且有旧列
+        old_cols = {r["name"] for r in c.execute("PRAGMA table_info(account_records)")}
+        if "api_key" in old_cols:
+            # 旧表有 api_key 列，需要迁移
+            # 1. 把旧 account_records 的账号级别字段写到新格式
+            rows = c.execute(
+                "SELECT email, email_password, mistral_password, console_session,"
+                " api_key, org_id, workspace_id, key_id, org_tier, created_at"
+                " FROM account_records").fetchall()
+            for r in rows:
+                email = r["email"] or ""
+                if not email:
+                    continue
+                # 账号级别凭据
+                c.execute(
+                    "INSERT OR IGNORE INTO account_records (email, email_password,"
+                    " mistral_password, console_session) VALUES (?,?,?,?)",
+                    (email, r["email_password"] or "", r["mistral_password"] or "",
+                     r["console_session"] or ""))
+                # 组织级别凭据
+                org_id = r["org_id"] or ""
+                if org_id and r["api_key"]:
+                    c.execute(
+                        "INSERT OR IGNORE INTO org_records (email, org_id, workspace_id,"
+                        " key_id, api_key, org_tier, created_at) VALUES (?,?,?,?,?,?,?)",
+                        (email, org_id, r["workspace_id"] or "", r["key_id"] or "",
+                         r["api_key"] or "", r["org_tier"] or "", r["created_at"] or ""))
+
+        # 检查旧 accounts 表是否存在
+        old_tables = {r["name"] for r in c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if "accounts" in old_tables:
+            old_state_cols = {r["name"] for r in c.execute("PRAGMA table_info(accounts)")}
+            if "email" in old_state_cols and "org_id" not in old_state_cols:
+                # 旧 accounts 表没有 org_id，需要迁移
+                rows = c.execute("SELECT * FROM accounts").fetchall()
+                for r in rows:
+                    email = r["email"] or ""
+                    if not email:
+                        continue
+                    # 从旧 account_records 拿 org_id
+                    org_row = c.execute(
+                        "SELECT org_id FROM org_records WHERE email=?", (email,)).fetchone()
+                    org_id = org_row["org_id"] if org_row else ""
+                    if not org_id:
+                        continue
+                    c.execute(
+                        "INSERT OR IGNORE INTO org_states (email, org_id, enabled,"
+                        " limit_tokens, remaining_tokens, limit_req, remaining_req,"
+                        " window_start, cooldown_until, last_used, last_status,"
+                        " consecutive_errors, last_remaining_after, budget_used_pct,"
+                        " budget_total, budget_reset_at, budget_checked_at,"
+                        " exhausted_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (email, org_id, r["enabled"] if "enabled" in r.keys() else 1,
+                         r["limit_tokens"] if "limit_tokens" in r.keys() else 50000,
+                         r["remaining_tokens"] if "remaining_tokens" in r.keys() else 50000,
+                         r["limit_req"] if "limit_req" in r.keys() else 50,
+                         r["remaining_req"] if "remaining_req" in r.keys() else 50,
+                         r["window_start"] if "window_start" in r.keys() else 0,
+                         r["cooldown_until"] if "cooldown_until" in r.keys() else 0,
+                         r["last_used"] if "last_used" in r.keys() else 0,
+                         r["last_status"] if "last_status" in r.keys() else "idle",
+                         r["consecutive_errors"] if "consecutive_errors" in r.keys() else 0,
+                         r["last_remaining_after"] if "last_remaining_after" in r.keys() else "",
+                         r["budget_used_pct"] if "budget_used_pct" in r.keys() else 0,
+                         r["budget_total"] if "budget_total" in r.keys() else 0,
+                         r["budget_reset_at"] if "budget_reset_at" in r.keys() else "",
+                         r["budget_checked_at"] if "budget_checked_at" in r.keys() else 0,
+                         r["exhausted_until"] if "exhausted_until" in r.keys() else 0))
+                # 删旧表
+                c.execute("DROP TABLE IF EXISTS accounts")
+
+        # 重建旧 account_records 表为新格式（如果还是旧格式）
+        if "api_key" in old_cols:
+            c.execute("CREATE TABLE account_records_old AS SELECT * FROM account_records")
+            c.execute("DROP TABLE account_records")
+            c.execute("""CREATE TABLE account_records (
+                email TEXT PRIMARY KEY, email_password TEXT,
+                mistral_password TEXT, console_session TEXT)""")
+            c.execute(
+                "INSERT INTO account_records (email, email_password, mistral_password,"
+                " console_session) SELECT email, email_password, mistral_password,"
+                " console_session FROM account_records_old")
+            c.execute("DROP TABLE account_records_old")
+
+        # 直接用游标写 meta，不调 self.set_meta（避免嵌套锁/事务死锁）
+        c.execute(
+            "INSERT INTO meta (k, v) VALUES ('schema_v2', '1')"
+            " ON CONFLICT(k) DO UPDATE SET v=excluded.v")
+
     # ---------- 账号 ----------
 
     def load_account_records(self) -> list[dict]:
@@ -277,10 +382,64 @@ class UsageStore:
                 f" VALUES ({placeholders})"
                 f" ON CONFLICT(email) DO UPDATE SET {updates}", rows)
 
+    # ---------- 组织凭据 ----------
+
+    def load_org_records(self) -> list[dict]:
+        with self._lock:
+            rows = self._con.execute(
+                f"SELECT {','.join(ORG_FIELDS)} FROM org_records").fetchall()
+        return [dict(r) for r in rows]
+
+    def save_org_records(self, records: list[dict]) -> None:
+        if not records:
+            return
+        rows = [tuple(r.get(f) or "" for f in ORG_FIELDS) for r in records]
+        placeholders = ",".join("?" * len(ORG_FIELDS))
+        updates = ",".join(f"{f}=excluded.{f}" for f in ORG_FIELDS
+                           if f not in ("email", "org_id"))
+        with self._lock, self._con:
+            self._con.executemany(
+                f"INSERT INTO org_records ({','.join(ORG_FIELDS)})"
+                f" VALUES ({placeholders})"
+                f" ON CONFLICT(email, org_id) DO UPDATE SET {updates}", rows)
+
+    def delete_org(self, email: str, org_id: str) -> None:
+        with self._lock, self._con:
+            self._con.execute(
+                "DELETE FROM org_records WHERE email=? AND org_id=?", (email, org_id))
+            self._con.execute(
+                "DELETE FROM org_states WHERE email=? AND org_id=?", (email, org_id))
+            self._con.execute(
+                "INSERT OR REPLACE INTO deleted_orgs (email, org_id, ts) VALUES (?,?,?)",
+                (email, org_id, time.time()))
+
+    # ---------- 组织状态 ----------
+
+    def load_org_states(self) -> dict[str, dict]:
+        """返回 {(email, org_id): state_dict}"""
+        with self._lock:
+            rows = self._con.execute("SELECT * FROM org_states").fetchall()
+        return {f"{r['email']}\x00{r['org_id']}": dict(r) for r in rows}
+
+    def save_org_states(self, rows: list[tuple]) -> None:
+        if not rows:
+            return
+        placeholders = ",".join("?" * len(ORG_STATE_FIELDS))
+        updates = ",".join(f"{f}=excluded.{f}" for f in ORG_STATE_FIELDS
+                           if f not in ("email", "org_id"))
+        with self._lock, self._con:
+            self._con.executemany(
+                f"INSERT INTO org_states ({','.join(ORG_STATE_FIELDS)})"
+                f" VALUES ({placeholders})"
+                f" ON CONFLICT(email, org_id) DO UPDATE SET {updates}", rows)
+
+    # ---------- 删除 / 墓碑 ----------
+
     def delete_account(self, email: str) -> None:
         with self._lock, self._con:
             self._con.execute("DELETE FROM account_records WHERE email=?", (email,))
-            self._con.execute("DELETE FROM accounts WHERE email=?", (email,))
+            self._con.execute("DELETE FROM org_records WHERE email=?", (email,))
+            self._con.execute("DELETE FROM org_states WHERE email=?", (email,))
             self._con.execute(
                 "INSERT INTO deleted_accounts (email, ts) VALUES (?,?)"
                 " ON CONFLICT(email) DO UPDATE SET ts=excluded.ts", (email, time.time()))
@@ -290,24 +449,17 @@ class UsageStore:
             rows = self._con.execute("SELECT email FROM deleted_accounts").fetchall()
         return {r["email"] for r in rows}
 
+    def deleted_org_keys(self) -> set[str]:
+        """返回 {(email, org_id)} 集合"""
+        with self._lock:
+            rows = self._con.execute("SELECT email, org_id FROM deleted_orgs").fetchall()
+        return {f"{r['email']}\x00{r['org_id']}" for r in rows}
+
     def undelete(self, email: str) -> None:
         with self._lock, self._con:
             self._con.execute("DELETE FROM deleted_accounts WHERE email=?", (email,))
-
-    def load_states(self) -> dict[str, dict]:
-        with self._lock:
-            rows = self._con.execute("SELECT * FROM accounts").fetchall()
-        return {r["email"]: dict(r) for r in rows}
-
-    def save_states(self, rows: list[tuple]) -> None:
-        if not rows:
-            return
-        placeholders = ",".join("?" * len(STATE_FIELDS))
-        updates = ",".join(f"{f}=excluded.{f}" for f in STATE_FIELDS if f != "email")
-        with self._lock, self._con:
-            self._con.executemany(
-                f"INSERT INTO accounts ({','.join(STATE_FIELDS)})"
-                f" VALUES ({placeholders}) ON CONFLICT(email) DO UPDATE SET {updates}", rows)
+            self._con.execute(
+                "DELETE FROM deleted_orgs WHERE email=?", (email,))
 
     # ---------- 查询 ----------
 

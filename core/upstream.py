@@ -44,7 +44,7 @@ class UpstreamRejected(Exception):
 @dataclass
 class Lease:
     response: httpx.Response
-    account: object
+    account: object  # 实际是 Org
     attempts: int = 1
     started_at: float = field(default_factory=time.time)
     reserved: int = 0
@@ -82,16 +82,18 @@ class Upstream:
 
     async def open(self, method: str, path: str, *, json_body=None, params=None,
                    est_tokens: int = 0, stream: bool = False,
-                   on_attempt_failed=None) -> Lease:
+                   on_attempt_failed=None, skip_limits: bool = False) -> Lease:
         """挑账号发请求，直到拿到 2xx 或重试次数耗尽。
 
         on_attempt_failed(account, status, body, error) 用于让调用方记录每次失败的尝试。
+        skip_limits=True 时跳过 update_limits（conversations 端点的限速头与 chat 不同，
+        不应覆盖 chat 的限速快照），且 pick 时不检查 limit_req。
         """
         attempts = 0
         last_status, last_error = 0, "unknown"
 
         for _ in range(max(1, self.settings.max_retry_accounts)):
-            account = self.pool.pick(est_tokens)
+            account = self.pool.pick(est_tokens, ignore_req_limit=skip_limits)
             if account is None:
                 wait = self.pool.next_window_wait()
                 raise UpstreamFailure(
@@ -123,7 +125,8 @@ class Upstream:
                         on_attempt_failed(account, 0, b"", last_error)
                     continue
 
-                self.pool.update_limits(account, response.headers)
+                if not skip_limits:
+                    self.pool.update_limits(account, response.headers)
                 status = response.status_code
 
                 # 402 = 该账号的月度美元额度花光了，换个号还有救，所以和 429/5xx
