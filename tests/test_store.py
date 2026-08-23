@@ -93,12 +93,16 @@ def test_concurrent_writes_do_not_lock(tmp_path):
     store.close()
 
 
-def test_account_record_roundtrip(tmp_path):
+def test_account_and_org_record_roundtrip(tmp_path):
     store = make_store(tmp_path)
-    store.save_account_records([{"email": "a@x.com", "api_key": "k", "org_id": "o1"}])
-    store.save_account_records([{"email": "a@x.com", "api_key": "k2", "org_id": "o1"}])
-    rows = store.load_account_records()
-    assert len(rows) == 1 and rows[0]["api_key"] == "k2"
+    # 账号级别凭据与组织级别凭据分表存；同 (email, org_id) 重复写是更新不是新增
+    store.save_account_records([{"email": "a@x.com", "mistral_password": "p"}])
+    store.save_org_records([{"email": "a@x.com", "org_id": "o1", "api_key": "k"}])
+    store.save_org_records([{"email": "a@x.com", "org_id": "o1", "api_key": "k2"}])
+    accs = store.load_account_records()
+    assert len(accs) == 1 and accs[0]["mistral_password"] == "p"
+    orgs = store.load_org_records()
+    assert len(orgs) == 1 and orgs[0]["api_key"] == "k2"
     store.close()
 
 

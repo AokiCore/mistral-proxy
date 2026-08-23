@@ -29,6 +29,17 @@ function budgetCell(a) {
     + '<span class="muted"> / $' + a.budget_total + '</span>';
 }
 
+/* 把嵌套的 Account.orgs[] 展平成行，每行带 email + org 信息 */
+function flattenAccounts(accounts) {
+  const rows = [];
+  for (const acc of accounts) {
+    for (const org of (acc.orgs || [])) {
+      rows.push({ ...org, email: acc.email, enabled: acc.enabled });
+    }
+  }
+  return rows;
+}
+
 /* 浏览器里读文件，只把内容传上去；服务端永远不接触本地路径。 */
 let PENDING = '';
 
@@ -100,7 +111,7 @@ function mergeContents(texts) {
 const table = new DataTable('#tbl', {
   selectable: true,
   pageSize: 20,
-  rowKey: (r) => r.email,
+  rowKey: (r) => r.uid,
   defaultSort: { key: 'email', dir: 'asc' },
   empty: { icon: 'server', text: '没有匹配的渠道' },
   columns: [
@@ -149,8 +160,8 @@ const table = new DataTable('#tbl', {
       key: '_act', label: '操作', width: '128px',
       render: (r) => '<div class="bar-row">'
         + '<button class="btn sm" data-act="' + (r.enabled ? 'disable' : 'enable')
-        + '" data-email="' + esc(r.email) + '">' + (r.enabled ? '禁用' : '启用') + '</button>'
-        + '<button class="btn sm danger" data-act="remove" data-email="' + esc(r.email)
+        + '" data-uid="' + esc(r.uid) + '">' + (r.enabled ? '禁用' : '启用') + '</button>'
+        + '<button class="btn sm danger" data-act="remove" data-uid="' + esc(r.uid)
         + '">删除</button></div>',
     },
   ],
@@ -178,9 +189,9 @@ function syncSelection() {
 }
 
 /* 查额度要登控制台，一个号约 2.5 秒，所以限量并给出进度提示。 */
-async function refreshBudget(emails) {
-  if (!emails.length) return;
-  if (emails.length > 20) {
+async function refreshBudget(uids) {
+  if (!uids.length) return;
+  if (uids.length > 20) {
     toast('一次最多查 20 个，选少点', 'warn');
     return;
   }
@@ -188,6 +199,11 @@ async function refreshBudget(emails) {
   btn.disabled = true;
   btn.textContent = '查询中…';
   try {
+    /* uid 是 api_key 的 hash，但 budget 查询需要 email，从行数据里取 */
+    const emails = uids.map((uid) => {
+      const row = ACCOUNTS.find((a) => a.uid === uid);
+      return row ? row.email : '';
+    }).filter(Boolean);
     const r = await j('/admin/accounts/budget', {
       method: 'POST', body: JSON.stringify({ emails }),
     });
@@ -207,13 +223,14 @@ async function refreshBudget(emails) {
 async function load() {
   try {
     const d = await j('/admin/accounts' + (REVEAL ? '?reveal=1' : ''));
-    ACCOUNTS = d.accounts;
+    ACCOUNTS = flattenAccounts(d.accounts);
     table.setRows(ACCOUNTS);
     applyFilter();
 
     const s = d.summary;
     renderKpis('kpis', [
       { icon: 'server', label: '渠道总数', value: s.total, foot: s.enabled + ' 个启用' },
+      { icon: 'layers', label: '组织数', value: s.orgs || 0, foot: '多组织多 Key' },
       {
         icon: 'check-circle', label: '当前可用', tone: 'ok',
         value: s.enabled - s.cooling - s.drained, foot: '未冷却且有额度',
@@ -241,13 +258,19 @@ async function load() {
   }
 }
 
-async function act(emails, action) {
-  if (!emails.length) return;
-  if (action === 'remove' && !confirm('删除 ' + emails.length
+async function act(uids, action) {
+  if (!uids.length) return;
+  if (action === 'remove' && !confirm('删除 ' + uids.length
     + ' 个渠道？会写入墓碑记录，重启后不会被 keys 文件重新导入。')) return;
   try {
+    /* enable/disable/remove 按 email 操作（账号级别），从 uid 反查 email */
+    const emails = uids.map((uid) => {
+      const row = ACCOUNTS.find((a) => a.uid === uid);
+      return row ? row.email : '';
+    }).filter(Boolean);
+    const unique = [...new Set(emails)];
     const r = await j('/admin/accounts/action', {
-      method: 'POST', body: JSON.stringify({ emails, action }),
+      method: 'POST', body: JSON.stringify({ emails: unique, action }),
     });
     toast('已' + { enable: '启用', disable: '禁用', remove: '删除', restore: '恢复' }[action]
       + ' ' + r.ok + ' 个渠道', 'ok');
@@ -263,7 +286,7 @@ $('q').addEventListener('input', applyFilter);
 $('filter').addEventListener('change', applyFilter);
 $('tbl').addEventListener('click', (ev) => {
   const btn = ev.target.closest('button[data-act]');
-  if (btn) act([btn.dataset.email], btn.dataset.act);
+  if (btn) act([btn.dataset.uid], btn.dataset.act);
 });
 $('tbl').addEventListener('selectionchange', syncSelection);
 $('btn-enable').addEventListener('click', () => act(table.selected(), 'enable'));

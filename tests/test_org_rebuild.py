@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
-"""组织重建（删组织→建组织→发新 key）的单元测试。
+"""组织重建（建新组织→发新 key）的单元测试。
 
 用 MockTransport 假装控制台，验证 OrgRebuilder 按正确顺序调用端点、
 从响应里抠出新的 org_id / workspace_id / api_key / key_id，
-以及旧 key 会被新 key 覆盖。
+以及 pool.add_org 把结果作为新 Org 挂到账号下。
 """
 import json
 
 import httpx
-import pytest
 
 from core.billing import BillingError
 from core.org_rebuild import OrgRebuilder, RebuildResult
@@ -62,21 +61,16 @@ def _fake_console(routes):
 def _acc(**kw):
     base = dict(
         email="mist747289@moonstarsun.shop",
-        api_key="sk-oldkey-deadbeef",
         mistral_password="Pw9060409!xAa1!",
-        org_id=OLD_ORG,
-        workspace_id="ws-old-uuid",
         console_session='{"ory_session_x": "sess-token"}',
     )
     base.update(kw)
     return Account(**base)
 
 
-def test_rebuild_happy_path():
-    """删旧组织→建新组织→列新 ws→发新 key，顺序与字段都对。"""
+def _routes(overrides: dict | None = None):
+    """默认的建组织三步路由；overrides 里值为 None 表示去掉该步。"""
     routes = {
-        ("DELETE", "/api/users/organization/", None):
-            (200, {"json": {"details": "Organization successfully deleted"}}),
         ("POST", "/api/users/organizations", None):
             (200, {"json": {"uuid": NEW_ORG, "name": "1", "org_tier": "B"}}),
         ("GET", "/api/workspaces", None):
@@ -85,10 +79,19 @@ def test_rebuild_happy_path():
         ("POST", "/api/billing/api-keys", None):
             (200, {"json": {"key": NEW_KEY, "key_id": NEW_KEY_ID}}),
     }
-    transport, calls = _fake_console(routes)
+    for key, val in (overrides or {}).items():
+        if val is None:
+            routes.pop(key, None)
+        else:
+            routes[key] = val
+    return routes
+
+
+def test_rebuild_happy_path():
+    """建新组织→列新 ws→发新 key，顺序与字段都对；旧组织保留不动。"""
+    transport, calls = _fake_console(_routes())
     rb = OrgRebuilder(transport=transport)
 
-    result = httpx.__dict__ and None  # placeholder, real call below
     import asyncio
     result = asyncio.run(rb.rebuild(_acc()))
 
@@ -99,12 +102,12 @@ def test_rebuild_happy_path():
     assert result.api_key == NEW_KEY
     assert result.key_id == NEW_KEY_ID
 
-    # 顺序: DELETE -> POST organizations -> GET workspaces -> POST api-keys
+    # 顺序: POST organizations -> GET workspaces -> POST api-keys，全程无 DELETE
     methods = [(c["method"], c["path"]) for c in calls if c["x_csrftoken"]]
-    assert methods[0] == ("DELETE", f"/api/users/organization/{OLD_ORG}")
-    assert methods[1] == ("POST", "/api/users/organizations")
-    assert methods[2][0] == "GET" and methods[2][1].startswith("/api/workspaces")
-    assert methods[3] == ("POST", "/api/billing/api-keys")
+    assert methods[0] == ("POST", "/api/users/organizations")
+    assert methods[1][0] == "GET" and methods[1][1].startswith("/api/workspaces")
+    assert methods[2] == ("POST", "/api/billing/api-keys")
+    assert all(m != "DELETE" for m, _ in methods), "重建不应删除旧组织"
 
     # 发 key 的 body 指向新 workspace
     key_call = calls[-1]
@@ -125,18 +128,7 @@ def test_rebuild_falls_back_to_password_login(tmp_path, monkeypatch):
 
     monkeypatch.setattr(OrgRebuilder, "_login", fake_login)
 
-    routes = {
-        ("DELETE", "/api/users/organization/", None):
-            (200, {"json": {"details": "deleted"}}),
-        ("POST", "/api/users/organizations", None):
-            (200, {"json": {"uuid": NEW_ORG, "org_tier": "B"}}),
-        ("GET", "/api/workspaces", None):
-            (200, {"json": {"items": [
-                {"uuid": NEW_WS, "is_default": True}]}}),
-        ("POST", "/api/billing/api-keys", None):
-            (200, {"json": {"key": NEW_KEY, "key_id": NEW_KEY_ID}}),
-    }
-    transport, calls = _fake_console(routes)
+    transport, calls = _fake_console(_routes())
     rb = OrgRebuilder(transport=transport)
     acc = _acc(console_session="")  # 无会话，必须密码登
 
@@ -150,13 +142,20 @@ def test_rebuild_falls_back_to_password_login(tmp_path, monkeypatch):
     assert result.session and "fresh-session" in result.session
 
 
-def test_rebuild_delete_fails_returns_not_ok():
-    """删组织失败时不继续后续步骤，返回 ok=False。"""
-    routes = {
-        ("DELETE", "/api/users/organization/", None):
-            (403, {"json": {"detail": "forbidden"}}),
-    }
-    transport, calls = _fake_console(routes)
+def test_rebuild_without_any_credential_returns_not_ok():
+    rb = OrgRebuilder()
+    result = rb.rebuild(_acc(console_session="", mistral_password=""))
+    import asyncio
+    result = asyncio.run(result) if hasattr(result, "__await__") else result
+    assert result.ok is False
+    assert result.error
+
+
+def test_rebuild_create_org_fails_returns_not_ok():
+    """建组织失败时不继续后续步骤，返回 ok=False。"""
+    transport, calls = _fake_console(_routes({
+        ("POST", "/api/users/organizations", None):
+            (403, {"json": {"detail": "forbidden"}})}))
     rb = OrgRebuilder(transport=transport)
 
     import asyncio
@@ -166,21 +165,15 @@ def test_rebuild_delete_fails_returns_not_ok():
     assert result.error
     # 失败后不应再发后续请求
     paths = [c["path"] for c in calls if c["x_csrftoken"]]
-    assert all("/api/users/organizations" not in p for p in paths)
+    assert all("/api/billing/api-keys" not in p for p in paths)
 
 
 def test_rebuild_new_org_has_no_default_workspace_returns_not_ok():
     """新组织建出来却查不到 default workspace，说明上游行为变了，不能硬塞。"""
-    routes = {
-        ("DELETE", "/api/users/organization/", None):
-            (200, {"json": {"details": "deleted"}}),
-        ("POST", "/api/users/organizations", None):
-            (200, {"json": {"uuid": NEW_ORG, "org_tier": "B"}}),
+    transport, _ = _fake_console(_routes({
         ("GET", "/api/workspaces", None):
             (200, {"json": {"items": [
-                {"uuid": "ws-non-default", "is_default": False}]}}),
-    }
-    transport, _ = _fake_console(routes)
+                {"uuid": "ws-non-default", "is_default": False}]}})}))
     rb = OrgRebuilder(transport=transport)
 
     import asyncio
@@ -190,46 +183,62 @@ def test_rebuild_new_org_has_no_default_workspace_returns_not_ok():
     assert "default" in result.error.lower() or "workspace" in result.error.lower()
 
 
-def test_pool_apply_rebuild_updates_account_and_persists():
-    """pool.apply_rebuild 原子地写入新凭据并清掉 exhausted 状态。"""
-    import time
-    pool = AccountPool()
-    acc = _acc()
-    pool.accounts.append(acc)
-    acc.exhausted_until = time.time() + 99999  # 标记为耗尽
-    acc.budget_used_pct = 100.0
-    acc.last_status = "budget"
+def test_pool_add_org_appends_new_org_and_persists(tmp_path):
+    """add_org 把重建结果作为新 Org 挂到账号下，旧 Org 保持不动。"""
+    from core.pool import Org
+    from core.store import UsageStore
+
+    store = UsageStore(str(tmp_path / "t.db"), start_writer=False)
+    pool = AccountPool(store)
+    pool.import_records([{"email": "mist747289@moonstarsun.shop",
+                          "api_key": "sk-oldkey", "org_id": OLD_ORG,
+                          "mistral_password": "Pw9060409!xAa1!",
+                          "console_session": '{"ory_session_x": "sess-token"}'}],
+                        persist=True)
+    acc = pool.accounts[0]
+    old_org = OLD_ORG
+    assert acc.orgs[0].org_id == old_org
 
     result = RebuildResult(
         ok=True, org_id=NEW_ORG, workspace_id=NEW_WS,
         api_key=NEW_KEY, key_id=NEW_KEY_ID, session='{"ory_session_x":"s"}')
 
-    applied = pool.apply_rebuild(acc, result)
+    org = pool.add_org(acc, result)
 
-    assert applied is True
-    assert acc.org_id == NEW_ORG
-    assert acc.workspace_id == NEW_WS
-    assert acc.api_key == NEW_KEY
-    assert acc.key_id == NEW_KEY_ID
+    assert org is not None
+    assert [o.org_id for o in acc.orgs] == [old_org, NEW_ORG], "旧组织保留，新组织追加"
+    assert org.api_key == NEW_KEY and org.workspace_id == NEW_WS
     assert acc.console_session == '{"ory_session_x":"s"}'
-    assert acc.exhausted_until == 0.0
-    assert acc.budget_used_pct == 0.0
-    assert acc.budget_checked_at == 0.0
-    assert acc.last_status == "rebuilt"
+    # 落库可恢复
+    fresh = AccountPool(store)
+    fresh.load_from_store()
+    new_ids = [o.org_id for o in fresh.accounts[0].orgs]
+    assert new_ids == [old_org, NEW_ORG]
+    assert fresh.accounts[0].orgs[1].api_key == NEW_KEY
+    store.close()
 
 
-def test_pool_apply_rebuild_skips_failed_result():
-    """重建失败时不动账号，返回 False。"""
-    import time
+def test_pool_add_org_is_idempotent():
+    """同一 org_id 重复 add 不产生重复组织。"""
     pool = AccountPool()
     acc = _acc()
     pool.accounts.append(acc)
-    old_key = acc.api_key
-    acc.exhausted_until = time.time() + 99999
+    result = RebuildResult(ok=True, org_id=NEW_ORG, workspace_id=NEW_WS,
+                           api_key=NEW_KEY, key_id=NEW_KEY_ID)
+    first = pool.add_org(acc, result)
+    again = pool.add_org(acc, result)
+    assert first is again
+    assert len(acc.orgs) == 1
+
+
+def test_pool_add_org_skips_failed_result():
+    """重建失败时不动账号，返回 None。"""
+    pool = AccountPool()
+    acc = _acc()
+    pool.accounts.append(acc)
 
     result = RebuildResult(ok=False, error="delete failed")
-    applied = pool.apply_rebuild(acc, result)
+    applied = pool.add_org(acc, result)
 
-    assert applied is False
-    assert acc.api_key == old_key
-    assert acc.exhausted_until > 0  # 仍标记耗尽
+    assert applied is None
+    assert acc.orgs == []

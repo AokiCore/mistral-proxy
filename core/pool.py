@@ -257,7 +257,10 @@ class AccountPool:
                     added += 1
                 acc_touched.append(acc.to_record())
                 # 组织级别
-                if api_key and org_id:
+                if api_key:
+                    # 老格式文件可能只有 email + api_key 没有 org_id；
+                    # 不兜底的话会导入一个没有任何可用组织的账号，整池静默 429。
+                    org_id = (org_id or "default").strip()
                     org_key = f"{email}\x00{org_id}"
                     if org_key in tombstone_orgs:
                         continue
@@ -267,6 +270,7 @@ class AccountPool:
                             val = rec.get(f)
                             if val:
                                 setattr(existing, f, val)
+                        existing.api_key = api_key
                     else:
                         org = Org(
                             email=email, org_id=org_id,
@@ -277,7 +281,11 @@ class AccountPool:
                             created_at=rec.get("created_at") or "",
                         )
                         acc.orgs.append(org)
-                    org_recs.append({f: rec.get(f, "") for f in ORG_FIELDS})
+                    org_rec = {f: rec.get(f, "") for f in ORG_FIELDS}
+                    org_rec["email"] = email
+                    org_rec["org_id"] = org_id
+                    org_rec["api_key"] = api_key
+                    org_recs.append(org_rec)
         if persist and self.store:
             if acc_touched:
                 self.store.save_account_records(acc_touched)

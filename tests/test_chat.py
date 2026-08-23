@@ -125,7 +125,7 @@ def test_stream_releases_semaphore_and_inflight(make_client):
         assert client.post(CHAT, json={**BODY, "stream": True}).status_code == 200
         ctx = client.app.state.ctx
         assert ctx.sem._value == 4
-        assert all(a.inflight == 0 for a in ctx.pool.accounts)
+        assert all(o.inflight == 0 for a in ctx.pool.accounts for o in a.orgs)
 
 
 def test_failed_attempts_release_resources(make_client):
@@ -134,7 +134,7 @@ def test_failed_attempts_release_resources(make_client):
         assert client.post(CHAT, json=BODY).status_code == 429
         ctx = client.app.state.ctx
         assert ctx.sem._value == 4
-        assert all(a.inflight == 0 for a in ctx.pool.accounts)
+        assert all(o.inflight == 0 for a in ctx.pool.accounts for o in a.orgs)
 
 
 def test_rejected_request_releases_resources(make_client):
@@ -143,7 +143,7 @@ def test_rejected_request_releases_resources(make_client):
         client.post(CHAT, json=BODY)
         ctx = client.app.state.ctx
         assert ctx.sem._value == 4
-        assert all(a.inflight == 0 for a in ctx.pool.accounts)
+        assert all(o.inflight == 0 for a in ctx.pool.accounts for o in a.orgs)
 
 
 # ---------- 协议兼容 ----------
@@ -400,5 +400,6 @@ def test_rate_limit_headers_update_pool(make_client):
     client = make_client(lambda rq: ok_json())
     with client:
         client.post(CHAT, json=BODY)
-        acc = next(a for a in client.app.state.ctx.pool.accounts if a.last_status == "ok")
-    assert acc.limit_tokens == 50000 and acc.remaining_req == 49
+        org = next(o for a in client.app.state.ctx.pool.accounts for o in a.orgs
+                   if o.last_status == "ok")
+    assert org.limit_tokens == 50000 and org.remaining_req == 49

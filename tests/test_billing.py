@@ -29,8 +29,13 @@ PAGE = ('...,"budget":{"vibe_budget":{"usage_percentage":0,"initial_budget":10,'
 def make_pool(n=3):
     pool = AccountPool(None)
     pool.import_records([{"email": f"a{i}@x.com", "api_key": f"k{i}",
-                          "mistral_password": "pw"} for i in range(n)], persist=False)
+                          "org_id": f"o{i}", "mistral_password": "pw"}
+                         for i in range(n)], persist=False)
     return pool
+
+
+def orgs(pool):
+    return [o for a in pool.accounts if a.enabled for o in a.orgs]
 
 
 # ---------- 解析 ----------
@@ -97,29 +102,29 @@ def test_next_reset_falls_back_to_first_of_next_month():
 
 def test_exhausted_account_is_skipped():
     pool = make_pool(2)
-    pool.update_budget(pool.accounts[0], Budget(used_pct=100.0, total=10,
-                                                reset_at="2099-01-01T00:00:00Z"))
+    pool.update_budget(orgs(pool)[0], Budget(used_pct=100.0, total=10,
+                                             reset_at="2099-01-01T00:00:00Z"))
     for _ in range(4):
-        acc = pool.pick()
-        assert acc is pool.accounts[1]
-        pool.release(acc)
+        org = pool.pick()
+        assert org is orgs(pool)[1]
+        pool.release(org)
 
 
 def test_budget_recovery_puts_account_back():
     pool = make_pool(1)
-    acc = pool.accounts[0]
-    pool.update_budget(acc, Budget(used_pct=100.0, total=10,
+    org = orgs(pool)[0]
+    pool.update_budget(org, Budget(used_pct=100.0, total=10,
                                    reset_at="2099-01-01T00:00:00Z"))
     assert pool.pick() is None
-    pool.update_budget(acc, Budget(used_pct=3.0, total=10))
-    assert pool.pick() is acc
+    pool.update_budget(org, Budget(used_pct=3.0, total=10))
+    assert pool.pick() is org
 
 
 def test_summary_excludes_exhausted_from_capacity():
     pool = make_pool(2)
     before = pool.summary()["tokens_left"]
-    pool.update_budget(pool.accounts[0], Budget(used_pct=100.0, total=10,
-                                                reset_at="2099-01-01T00:00:00Z"))
+    pool.update_budget(orgs(pool)[0], Budget(used_pct=100.0, total=10,
+                                             reset_at="2099-01-01T00:00:00Z"))
     after = pool.summary()
     assert after["exhausted"] == 1
     assert after["tokens_left"] == before // 2, "花光的号不该再算进可用容量"
@@ -127,11 +132,11 @@ def test_summary_excludes_exhausted_from_capacity():
 
 def test_mark_exhausted_is_monotonic():
     pool = make_pool(1)
-    acc = pool.accounts[0]
+    org = orgs(pool)[0]
     far = time.time() + 86400
-    pool.mark_exhausted(acc, far)
-    pool.mark_exhausted(acc, time.time() + 10)
-    assert acc.exhausted_until == far
+    pool.mark_exhausted(org, far)
+    pool.mark_exhausted(org, time.time() + 10)
+    assert org.exhausted_until == far
 
 
 # ---------- 巡检取号顺序 ----------
@@ -139,31 +144,33 @@ def test_mark_exhausted_is_monotonic():
 def test_checker_prefers_used_but_never_checked():
     pool = make_pool(3)
     now = time.time()
-    pool.accounts[0].last_used = 0                      # 没用过 -> 不查
-    pool.accounts[1].last_used = now - 10                # 用过没查过 -> 最优先
-    pool.accounts[2].last_used = now - 5
-    pool.accounts[2].budget_checked_at = now - 1
-    assert _pick_for_budget_check(pool, 3600, now) is pool.accounts[1]
+    all_orgs = orgs(pool)
+    all_orgs[0].last_used = 0                      # 没用过 -> 不查
+    all_orgs[1].last_used = now - 10               # 用过没查过 -> 最优先
+    all_orgs[2].last_used = now - 5
+    all_orgs[2].budget_checked_at = now - 1
+    assert _pick_for_budget_check(pool, 3600, now) is all_orgs[1]
 
 
 def test_checker_skips_idle_and_exhausted():
     pool = make_pool(2)
     now = time.time()
-    pool.accounts[0].last_used = 0
-    pool.accounts[1].last_used = now
-    pool.accounts[1].exhausted_until = now + 3600
+    all_orgs = orgs(pool)
+    all_orgs[0].last_used = 0
+    all_orgs[1].last_used = now
+    all_orgs[1].exhausted_until = now + 3600
     assert _pick_for_budget_check(pool, 3600, now) is None
 
 
 def test_checker_skips_accounts_without_any_credential():
     pool = make_pool(1)
-    a = pool.accounts[0]
-    a.last_used = time.time()
-    a.mistral_password = ""
+    org = orgs(pool)[0]
+    org.last_used = time.time()
+    pool.accounts[0].mistral_password = ""
     assert _pick_for_budget_check(pool, 3600, time.time()) is None
     # 只要有注册时存下的会话就够，不需要密码
-    a.console_session = '{"ory_session_x": "v"}'
-    assert _pick_for_budget_check(pool, 3600, time.time()) is a
+    pool.accounts[0].console_session = '{"ory_session_x": "v"}'
+    assert _pick_for_budget_check(pool, 3600, time.time()) is org
 
 
 def test_stored_session_is_used_without_login(monkeypatch):
@@ -256,10 +263,10 @@ def test_console_session_persists(tmp_path):
 def test_checker_refreshes_stale_entries():
     pool = make_pool(1)
     now = time.time()
-    a = pool.accounts[0]
-    a.last_used = now - 9000
-    a.budget_checked_at = now - 8000
-    assert _pick_for_budget_check(pool, 3600, now) is a
+    org = orgs(pool)[0]
+    org.last_used = now - 9000
+    org.budget_checked_at = now - 8000
+    assert _pick_for_budget_check(pool, 3600, now) is org
     assert _pick_for_budget_check(pool, 99999, now) is None
 
 
@@ -287,7 +294,7 @@ def test_402_fails_over_to_another_account(make_client):
         assert r.status_code == 200
         assert len(seen) == 2, "应当换号重试一次"
         pool = client.app.state.ctx.pool
-        dead = next(a for a in pool.accounts if a.email == "a@x.com")
+        dead = next(o for a in pool.accounts if a.email == "a@x.com" for o in a.orgs)
         assert dead.exhausted_until > time.time(), "402 的号要被标记为额度耗尽"
 
 
@@ -324,9 +331,9 @@ def test_account_dict_exposes_budget(make_client):
     client = make_client(lambda r: httpx.Response(200, json={}))
     with client:
         rows = client.get("/admin/accounts").json()
-    row = rows["accounts"][0] if isinstance(rows, dict) else rows[0]
+    org_row = rows["accounts"][0]["orgs"][0]
     for field in ("budget_used_pct", "budget_total", "exhausted"):
-        assert field in row, f"账号信息里缺 {field}"
+        assert field in org_row, f"组织信息里缺 {field}"
 
 
 def test_budget_survives_restart(tmp_path):
@@ -337,16 +344,18 @@ def test_budget_survives_restart(tmp_path):
     store = UsageStore(db, start_writer=False)
     pool = AccountPool(store)
     pool.import_records([{"email": "a@x.com", "api_key": "k"}])
-    pool.update_budget(pool.accounts[0], Budget(used_pct=100.0, total=10,
-                                                reset_at="2099-01-01T00:00:00Z"))
+    pool.update_budget(pool.accounts[0].orgs[0],
+                       Budget(used_pct=100.0, total=10,
+                              reset_at="2099-01-01T00:00:00Z"))
     pool.save_states()
     store.close()
 
     store2 = UsageStore(db, start_writer=False)
     pool2 = AccountPool(store2)
     pool2.load_from_store()
-    assert pool2.accounts[0].budget_used_pct == 100.0
-    assert pool2.accounts[0].exhausted_until > time.time()
+    org = pool2.accounts[0].orgs[0]
+    assert org.budget_used_pct == 100.0
+    assert org.exhausted_until > time.time()
     assert pool2.pick() is None
     store2.close()
 

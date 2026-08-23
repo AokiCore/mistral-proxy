@@ -57,7 +57,9 @@ def test_upstream_key_never_returned_by_default(make_client):
     client = make_client(ok)
     with client:
         r = client.get("/admin/accounts")
-        assert "api_key" not in r.json()["accounts"][0]
+        acc = r.json()["accounts"][0]
+        assert "api_key" not in acc
+        assert all("api_key" not in o for o in acc["orgs"])
         assert "key-a@x.com" not in r.text
 
 
@@ -66,7 +68,7 @@ def test_reveal_requires_flag_and_auth(make_client):
     with client:
         assert client.get("/admin/accounts?reveal=1").status_code == 401
         revealed = client.get("/admin/accounts?reveal=1", headers=AUTH).json()
-        assert revealed["accounts"][0]["api_key"] == "key-a@x.com"
+        assert revealed["accounts"][0]["orgs"][0]["api_key"] == "key-a@x.com"
 
 
 def test_client_key_plaintext_only_returned_at_creation(make_client):
@@ -130,7 +132,9 @@ def test_import_accepts_register_script_output(make_client):
         # 凭据字段要跟着一起进库，不能只留 email/api_key
         revealed = client.get("/admin/accounts?reveal=1").json()["accounts"]
         one = next(a for a in revealed if a["email"] == "reg0@x.com")
-        assert one["api_key"] == "key0" and one["org_id"] == "org_id-0"
+        org = one["orgs"][0]
+        assert org["api_key"] == "key0" and org["org_id"] == "org_id-0"
+        assert org["org_tier"] == "org_tier-0"
 
 
 def test_import_reports_skipped_and_blocked(make_client):

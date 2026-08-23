@@ -85,10 +85,10 @@ def chat_to_conversations(body: dict) -> tuple[dict, bool]:
 
     返回 (conversations 请求体, stream)。messages 拆成 inputs + instructions：
       - system 消息合并进 instructions；
-      - user/assistant 消息变成 MessageInputEntry {role, content}；
+      - user/assistant 消息变成 MessageInputEntry {type:"message.input", role, content}；
       - assistant 消息带 tool_calls 时，每个 tool_call 变成 FunctionCallEntry
-        {name, arguments, tool_call_id}；
-      - tool 消息变成 FunctionResultEntry {result, tool_call_id}。
+        {type:"function.call", name, arguments, tool_call_id}；
+      - tool 消息变成 FunctionResultEntry {type:"function.result", result, tool_call_id}。
 
     tools 透传：OpenAI 的 {type:"function", function:{name,description,parameters}}
     与 Conversations API 的 FunctionTool 结构一致，原样保留。
@@ -113,28 +113,26 @@ def chat_to_conversations(body: dict) -> tuple[dict, bool]:
         # assistant 带 tool_calls：先发文本（若有），再逐个 tool_call → FunctionCallEntry
         if role == "assistant" and msg.get("tool_calls"):
             if text:
-                inputs.append({"role": "assistant", "content": text})
+                inputs.append(_entry("message.input", role=role, content=text))
             for tc in msg["tool_calls"]:
                 if not isinstance(tc, dict):
                     continue
                 fn = tc.get("function") or {}
-                inputs.append({
-                    "name": fn.get("name") or "",
-                    "arguments": fn.get("arguments") or "",
-                    "tool_call_id": tc.get("id") or "",
-                })
+                inputs.append(_entry("function.call",
+                                     tool_call_id=tc.get("id") or "",
+                                     name=fn.get("name") or "",
+                                     arguments=fn.get("arguments") or ""))
             continue
 
         # tool 角色消息 → FunctionResultEntry
         if role == "tool":
-            inputs.append({
-                "result": text,
-                "tool_call_id": msg.get("tool_call_id") or "",
-            })
+            inputs.append(_entry("function.result",
+                                 tool_call_id=msg.get("tool_call_id") or "",
+                                 result=text))
             continue
 
         # 普通 user/assistant 消息
-        inputs.append({"role": role, "content": text})
+        inputs.append(_entry("message.input", role=role, content=text))
 
     # CompletionArgs 支持的参数（与上游 schema 对齐）：
     # temperature, max_tokens, top_p, stop, random_seed, presence_penalty,
@@ -283,7 +281,12 @@ def conversations_stream_events(lease, requested_model: str):
     usage = None
     error_msg = ""
     has_tool_calls = False
+    # OpenAI 语义下，同一次函数调用的所有参数分片必须共用同一个 index，
+    # 客户端按 index 聚合并拼接 arguments。上游的每个 function.call.delta 都带
+    # 完整的 id/name/tool_call_id，所以这里要按 tool_call_id 去重：只有第一次
+    # 见到的调用才递增 index 并携带 id/name，后续分片只带增量参数。
     tool_call_index = 0
+    seen_calls: dict[str, int] = {}
 
     def base_chunk(delta: dict) -> dict:
         return {
@@ -338,19 +341,34 @@ def conversations_stream_events(lease, requested_model: str):
                         if text:
                             yield _sse(base_chunk({"reasoning_content": text}))
                 elif etype == "function.call.delta":
-                    # FunctionCallEvent: {id, name, arguments, tool_call_id}
-                    # 转成 OpenAI 的 tool_calls delta
+                    # FunctionCallEvent: {id, name, arguments, tool_call_id, output_index}
+                    # 转成 OpenAI 的 tool_calls delta。同一个调用（按 tool_call_id
+                    # 识别）的后续分片复用首个分片分配的 index，只带增量 arguments；
+                    # 客户端按 index 聚合并拼接出完整参数。
                     has_tool_calls = True
                     tc_id = event.get("tool_call_id") or event.get("id") or ""
                     name = event.get("name") or ""
                     arguments = event.get("arguments") or ""
-                    yield _sse(base_chunk({"tool_calls": [{
-                        "index": tool_call_index,
-                        "id": tc_id,
-                        "type": "function",
-                        "function": {"name": name, "arguments": arguments},
-                    }]}))
+
+                    if tc_id and tc_id in seen_calls:
+                        fragment: dict = {"index": seen_calls[tc_id]}
+                        if arguments:
+                            fragment["function"] = {"arguments": arguments}
+                            yield _sse(base_chunk({"tool_calls": [fragment]}))
+                        continue
+
+                    index = tool_call_index
                     tool_call_index += 1
+                    seen_calls[tc_id or f"\x00anon{index}"] = index
+                    fn: dict = {"arguments": arguments}
+                    if name:
+                        fn["name"] = name
+                    yield _sse(base_chunk({"tool_calls": [{
+                        "index": index,
+                        "id": tc_id or f"call_{index}",
+                        "type": "function",
+                        "function": fn,
+                    }]}))
                 elif etype == "conversation.response.done":
                     usage = event.get("usage") or {}
                 elif etype == "conversation.response.error":
@@ -394,6 +412,16 @@ def _content_to_text(content) -> str:
     if content is None:
         return ""
     return str(content)
+
+
+def _entry(entry_type: str, **fields) -> dict:
+    """构造一条 conversations 输入 entry。
+
+    上游的 inputs 是按 type 判别的联合类型（MessageInputEntry / FunctionCallEntry /
+    FunctionResultEntry），SDK 序列化时总是带 object:"entry" 和 type 字段。
+    不带 type 的话上游按判别联合校验会直接失败，多轮对话第二轮就 422。
+    """
+    return {"object": "entry", "type": entry_type, **fields}
 
 
 def _clean_usage(usage: dict, reasoning_tokens: int) -> dict:

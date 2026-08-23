@@ -38,8 +38,12 @@ MODEL_LIST = {"object": "list", "data": [
 
 
 def seed_accounts(db_path: str, emails) -> None:
+    """按当前 schema 播种：账号凭据 + 每号一个组织（api_key 在 Org 上）。"""
     store = UsageStore(db_path, start_writer=False)
-    store.save_account_records([{"email": e, "api_key": f"key-{e}"} for e in emails])
+    store.save_account_records([{"email": e} for e in emails])
+    store.save_org_records([
+        {"email": e, "org_id": f"org-{i}", "api_key": f"key-{e}"}
+        for i, e in enumerate(emails)])
     store.close()
 
 
