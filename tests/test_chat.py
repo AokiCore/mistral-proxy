@@ -403,3 +403,29 @@ def test_rate_limit_headers_update_pool(make_client):
         org = next(o for a in client.app.state.ctx.pool.accounts for o in a.orgs
                    if o.last_status == "ok")
     assert org.limit_tokens == 50000 and org.remaining_req == 49
+
+
+def test_glm_conversations_429_does_not_cool_orgs_for_chat(make_client):
+    """上游对 conversations 报 429（免费号 GLM 预算被关成 0）时，
+    只挡 GLM 派发，绝不能把 chat 的限速状态一起清零。"""
+    def handler(request):
+        if request.url.path.endswith("/conversations"):
+            return httpx.Response(429, json={"detail": "Token rate limit reached."})
+        return ok_json()
+
+    client = make_client(handler)
+    with client:
+        r = client.post(CHAT, json={**BODY, "model": "glm-5-2"})
+        assert r.status_code == 429
+
+        ctx = client.app.state.ctx
+        assert all(o.remaining_req == 50 and o.remaining_tokens == 50000
+                   for a in ctx.pool.accounts for o in a.orgs), "chat 配额不能被 GLM 失败清零"
+
+        # 所有组织的 GLM 冷却生效后，第二次 GLM 请求快速失败且报错明确
+        r2 = client.post(CHAT, json={**BODY, "model": "glm-5-2"})
+        assert r2.status_code == 429
+        assert "conversations" in r2.json()["error"]["message"]
+
+        # chat 完全不受影响
+        assert client.post(CHAT, json=BODY).status_code == 200

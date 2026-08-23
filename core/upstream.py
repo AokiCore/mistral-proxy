@@ -96,9 +96,11 @@ class Upstream:
             account = self.pool.pick(est_tokens, ignore_req_limit=skip_limits)
             if account is None:
                 wait = self.pool.next_window_wait()
-                raise UpstreamFailure(
-                    "Rate limit exceeded: every account in the pool is cooling down",
-                    429, wait, attempts)
+                message = ("Rate limit exceeded: every account in the pool is cooling down"
+                           if not skip_limits else
+                           "No account can serve conversations (GLM) right now: "
+                           "upstream rejects the conversations API on every account")
+                raise UpstreamFailure(message, 429, wait, attempts)
 
             attempts += 1
             acc_held, sem_held, response = True, False, None
@@ -157,7 +159,12 @@ class Upstream:
                     body = await response.aread()
                     await response.aclose()
                     response = None
-                    self.pool.mark_error(account, status, retry_after=retry_after)
+                    if skip_limits:
+                        # conversations 端点的限速与 chat 相互独立（实测免费账号
+                        # 会被整体关成 limit=0），只挡 GLM，不清 chat 的配额。
+                        self.pool.mark_conv_rejected(account)
+                    else:
+                        self.pool.mark_error(account, status, retry_after=retry_after)
                     last_status, last_error = status, body[:200].decode("utf-8", "replace")
                     if on_attempt_failed:
                         on_attempt_failed(account, status, body, last_error)

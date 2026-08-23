@@ -69,6 +69,11 @@ class Org:
     budget_checked_at: float = 0.0
     exhausted_until: float = 0.0
 
+    # conversations 端点独立冷却：GLM 被拒时只挡 GLM 派发，
+    # 不动 cooldown_until/remaining_*（那些属于 chat 端点的调度状态）。
+    # 运行时状态，不落库，重启后首次请求重新探测。
+    conv_cooldown_until: float = 0.0
+
     @property
     def uid(self) -> str:
         """稳定的 UI 标识符（api_key 的 hash）。"""
@@ -458,6 +463,8 @@ class AccountPool:
                 o = orgs[(self._rr_index + k) % n]
                 if o.cooldown_until > now or o.exhausted_until > now:
                     continue
+                if ignore_req_limit and o.conv_cooldown_until > now:
+                    continue
                 if not ignore_req_limit and o.remaining_req - o.inflight <= 0:
                     continue
                 if oversized:
@@ -473,6 +480,8 @@ class AccountPool:
                 best, best_score = None, -1.0
                 for o in orgs:
                     if o.cooldown_until > now or o.exhausted_until > now:
+                        continue
+                    if ignore_req_limit and o.conv_cooldown_until > now:
                         continue
                     free = max(0, o.remaining_tokens - o.reserved_tokens)
                     ts = free / max(o.limit_tokens, 1)
@@ -598,6 +607,19 @@ class AccountPool:
             else:
                 backoff = min(30.0, 5.0 * org.consecutive_errors)
                 org.cooldown_until = max(org.cooldown_until, now + backoff)
+
+    def mark_conv_rejected(self, org: Org, ttl: float = 900.0) -> None:
+        """conversations(GLM) 被上游拒绝：只给 GLM 派发加独立冷却。
+
+        实测免费账号在 conversations 端点的 token 预算会被上游整体关成 0
+        （x-ratelimit-limit-tokens-minute: 0，恒 429）。这种失败跟 chat 端点
+        的限速窗口无关，绝不能走 mark_error 把 chat 的配额也清零——否则
+        GLM 流量会持续污染正常模型的调度。TTL 到期后自动重探。
+        """
+        now = time.time()
+        with self._lock:
+            org.conv_cooldown_until = max(org.conv_cooldown_until, now + ttl)
+            org.last_status = "conv:429"
 
     def next_window_wait(self) -> float:
         now = time.time()

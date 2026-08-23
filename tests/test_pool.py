@@ -187,6 +187,32 @@ def test_success_clears_error_streak():
     assert org.last_status == "ok"
 
 
+def test_conv_rejection_does_not_poison_chat_scheduling():
+    """conversations 被拒只挡 GLM 派发，chat 的配额/冷却不能被清掉。"""
+    pool = make_pool(2)
+    org = orgs(pool)[0]
+    req_before, tok_before = org.remaining_req, org.remaining_tokens
+    pool.mark_conv_rejected(org)
+    # 正常 pick（chat）仍能选中它
+    assert pool.pick() is org
+    # GLM 派发（ignore_req_limit=True）跳过它
+    got = pool.pick(ignore_req_limit=True)
+    assert got is not None and got is not org
+    # 配额状态原封不动
+    assert org.remaining_req == req_before
+    assert org.remaining_tokens == tok_before
+    assert org.cooldown_until < time.time() + 5
+
+
+def test_conv_rejection_expires():
+    pool = make_pool(1)
+    org = first_org(pool)
+    pool.mark_conv_rejected(org, ttl=60)
+    assert pool.pick(ignore_req_limit=True) is None
+    org.conv_cooldown_until = time.time() - 1
+    assert pool.pick(ignore_req_limit=True) is org
+
+
 def test_window_expiry_restores_quota():
     pool = make_pool(1)
     org = first_org(pool)
